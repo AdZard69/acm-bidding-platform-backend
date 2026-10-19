@@ -105,8 +105,8 @@ model Score {
 
 model GameConfig {
   id                 Int      @id @default(autoincrement())
-  baseTime           Int      @default(100) @map("base_time")
-  minBid             Int      @default(20) @map("min_bid")
+  baseTime           Int      @default(120) @map("base_time")
+  minBid             Int      @default(30) @map("min_bid")
   maxTeams           Int      @default(10) @map("max_teams")
   slotsPerPrompt     Int      @default(3) @map("slots_per_prompt")
   bidDurationSeconds Int      @default(60) @map("bid_duration_seconds")

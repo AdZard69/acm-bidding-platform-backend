@@ -3,12 +3,12 @@
  * Implements exponential multiplying factor based on time commitment:
  * Formula: multiplier = e ^ (k * (1 - bid / base_time))
  *
- * Round 1: k = 1.0  (range ~1.000 to ~2.226)
- * Round 2: k = 0.7  (range ~1.000 to ~1.751)
+ * Round 1: k = 1.0  (range ~1.000 to ~2.117)
+ * Round 2: k = 0.7  (range ~1.000 to ~1.690)
  */
 
-const DEFAULT_BASE_TIME = 100;
-const DEFAULT_MIN_BID = 20;
+const DEFAULT_BASE_TIME = 120;
+const DEFAULT_MIN_BID = 30;
 
 const K_FACTORS = Object.freeze({
   1: 1.0,

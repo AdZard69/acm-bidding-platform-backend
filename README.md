@@ -33,57 +33,64 @@ multiplier = e ^ (k × (1 - bid / base_time))
 ```
 
 where:
-- `base_time` = 100 minutes (the starting reference time)
-- `bid` = whatever the team bid (minimum 20 mins, max 100 mins)
+- `base_time` = 120 minutes (the starting reference time / maximum bid)
+- `bid` = whatever the team bid (minimum 30 mins, max 120 mins)
 - `k` = 1.0 for round 1, 0.7 for round 2
 - `e` = euler's number (~2.718)
 
 ### why this works
 
-the exponent `(1 - bid/base_time)` gives us a value between 0 and 0.8 (since min bid is 20). when bid equals base time, multiplier is exactly 1.0 — no advantage. as the bid drops, the multiplier climbs exponentially but not absurdly.
+the exponent `(1 - bid/base_time)` gives us a value between 0 and 0.75 (since min bid is 30). when bid equals base time (120 mins), multiplier is exactly 1.0 — no advantage, no penalty. as the bid drops toward 30 mins, the multiplier climbs exponentially up to 2.117.
 
-### round 1 multiplier table
+### round 1 multiplier table (k = 1.0)
 
-| bid (mins) | multiplier |
-|-----------|-----------|
-| 100 | 1.000 |
-| 90 | 1.105 |
-| 80 | 1.221 |
-| 70 | 1.350 |
-| 60 | 1.492 |
-| 50 | 1.649 |
-| 40 | 1.822 |
-| 30 | 2.014 |
-| 20 | 2.226 |
+| bid (mins) | multiplier | boost |
+|-----------|-----------|-------|
+| 120 | 1.000 | +0% |
+| 110 | 1.087 | +8.7% |
+| 100 | 1.181 | +18.1% |
+| 90 | 1.284 | +28.4% |
+| 80 | 1.396 | +39.6% |
+| 70 | 1.517 | +51.7% |
+| 60 | 1.649 | +64.9% |
+| 50 | 1.792 | +79.2% |
+| 40 | 1.948 | +94.8% |
+| 30 | 2.117 | +111.7% |
 
 ### round 2 multiplier table (k = 0.7)
 
-| bid (mins) | multiplier |
-|-----------|-----------|
-| 100 | 1.000 |
-| 90 | 1.073 |
-| 80 | 1.150 |
-| 70 | 1.234 |
-| 60 | 1.323 |
-| 50 | 1.419 |
-| 40 | 1.522 |
-| 30 | 1.632 |
-| 20 | 1.751 |
+| bid (mins) | multiplier | boost |
+|-----------|-----------|-------|
+| 120 | 1.000 | +0% |
+| 110 | 1.060 | +6.0% |
+| 100 | 1.124 | +12.4% |
+| 90 | 1.191 | +19.1% |
+| 80 | 1.263 | +26.3% |
+| 70 | 1.339 | +33.9% |
+| 60 | 1.419 | +41.9% |
+| 50 | 1.504 | +50.4% |
+| 40 | 1.595 | +59.5% |
+| 30 | 1.690 | +69.0% |
 
 ### fairness check
 
-say team A bids 40 mins in round 1 (multiplier 1.822) and gets a judge score of 65.
-final score = 65 × 1.822 = **118.4**
+say team A bids 50 mins in round 1 (multiplier 1.792) and gets a judge score of 70.
+final score = 70 × 1.792 = **125.44**
 
-team B plays safe, bids 90 mins in round 1 (multiplier 1.105), scores 95 from judges.
-final score = 95 × 1.105 = **105.0**
+team B plays safe, bids 110 mins in round 1 (multiplier 1.087), scores 90 from judges.
+final score = 90 × 1.087 = **97.83**
 
-team A wins even though their code wasn't as polished — but they also solved it in less than half the time. that's the whole point. risk = reward.
+team A wins even though their code had a few rough edges — but they also delivered in under half the total available time. risk = reward.
 
-now if someone lands in round 2 and bids 20 mins (multiplier 1.751), scores 80:
-final score = 80 × 1.751 = **140.1**
+what if someone overcommits? team C bids 30 mins (multiplier 2.117) but panics and delivers an incomplete project, scoring 45 from judges:
+final score = 45 × 2.117 = **95.27**
 
-they can still win but they had to be insanely aggressive AND deliver. the reduced k value makes sure round 2 isn't a free ride.
+team C loses to both Team A and Team B. the formula rewards speed, but not at the cost of total failure.
+
+now if someone lands in round 2 and bids 30 mins (multiplier 1.690), scores 75:
+final score = 75 × 1.690 = **126.75**
+
+they can still compete, but the reduced k factor makes sure round 2 winners don't get an outsized advantage.
 
 ---
 

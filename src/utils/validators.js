@@ -5,11 +5,11 @@
 /**
  * Validates a bid minute value
  * @param {any} bidMinutes
- * @param {number} minBid - Floor (default 20)
- * @param {number} baseTime - Ceiling (default 100)
+ * @param {number} minBid - Floor (default 30)
+ * @param {number} baseTime - Ceiling (default 120)
  * @returns {{ isValid: boolean, error?: string, value?: number }}
  */
-const validateBid = (bidMinutes, minBid = 20, baseTime = 100) => {
+const validateBid = (bidMinutes, minBid = 30, baseTime = 120) => {
   if (bidMinutes === undefined || bidMinutes === null || bidMinutes === '') {
     return { isValid: false, error: 'Bid time is required' };
   }
