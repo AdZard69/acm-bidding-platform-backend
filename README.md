@@ -258,33 +258,50 @@ admin:end-round      → {}
 
 ## project structure
 
+this is a smol project so I will use mvc or simply different folders for each handling purpose rather than modules for each feat
+
 ```
-bidding-platform-acm/
-├── src/
-│   ├── config/
-│   │   ├── database.js          ← pg pool setup
-│   │   └── env.js               ← dotenv + validation
-│   ├── middleware/
-│   │   ├── authTeam.js          ← verify team JWT
-│   │   └── authAdmin.js         ← verify admin JWT
-│   ├── routes/
-│   │   ├── auth.js              ← login endpoints
-│   │   ├── admin.js             ← admin CRUD + round controls
-│   │   ├── bid.js               ← team bidding endpoints
-│   │   └── scores.js            ← score submission + leaderboard
-│   ├── socket/
-│   │   ├── index.js             ← socket.io init + auth middleware
-│   │   ├── bidHandler.js        ← handle bid:place, bid:update
-│   │   ├── timerManager.js      ← countdown logic, pause/resume/extend
-│   │   └── adminHandler.js      ← admin socket events
-│   ├── utils/
-│   │   ├── multiplier.js        ← the multiplier formula
-│   │   ├── bidEngine.js         ← winner selection, assignment logic
-│   │   └── validators.js        ← input validation helpers
-│   └── server.js                ← express app + socket.io bootstrap
+acm-bidding-platform-backend/
 ├── prisma/
 │   └── schema.prisma            ← prisma schema (models, relations, constraints)
+├── src/
+│   ├── config/
+│   │   ├── env.js               ← dotenv + validation
+│   │   └── prisma.js            ← prisma client instance
+│   ├── constants/
+│   │   ├── gameStatus.js        ← game state enums
+│   │   └── socketEvents.js      ← socket event name constants
+│   ├── controllers/
+│   │   ├── adminController.js   ← admin business logic
+│   │   ├── authController.js    ← login business logic
+│   │   ├── bidController.js     ← bid business logic
+│   │   └── scoreController.js   ← score & leaderboard logic
+│   ├── middleware/
+│   │   ├── authAdmin.js         ← verify admin JWT
+│   │   ├── authSocket.js        ← socket handshake auth
+│   │   ├── authTeam.js          ← verify team JWT
+│   │   └── errorHandler.js      ← express error handler
+│   ├── routes/
+│   │   ├── admin.js             ← admin CRUD + round controls
+│   │   ├── auth.js              ← login endpoints
+│   │   ├── bid.js               ← team bidding endpoints
+│   │   ├── index.js             ← api router aggregator
+│   │   └── scores.js            ← score submission + leaderboard
+│   ├── services/
+│   │   ├── bidEngine.js         ← winner selection, assignment logic
+│   │   ├── gameService.js       ← round/prompt flow management
+│   │   └── multiplierService.js ← the multiplier formula
+│   ├── socket/
+│   │   ├── adminHandler.js      ← admin socket events
+│   │   ├── bidHandler.js        ← handle bid:place, bid:update
+│   │   ├── index.js             ← socket.io init + rooms
+│   │   └── timerManager.js      ← countdown logic, pause/resume/extend
+│   ├── utils/
+│   │   ├── logger.js            ← console logging helper
+│   │   └── validators.js        ← input validation helpers
+│   └── server.js                ← express app + socket.io bootstrap
 ├── .env.example
+├── .gitignore
 ├── package.json
 └── README.md
 ```
