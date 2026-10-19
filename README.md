@@ -125,93 +125,114 @@ round 2 uses `k = 0.7` instead of `k = 1.0` for the multiplier. you still get re
 | runtime | Node.js | solid websocket support, fast enough for this |
 | framework | Express | simple, everyone knows it |
 | real-time | Socket.IO | handles reconnects, rooms, fallback — exactly what we need for live bidding |
-| database | PostgreSQL | relational data fits perfectly here (teams, bids, assignments, scores) |
+| orm | Prisma | type-safe queries, auto-generated client, clean migrations |
+| database | Supabase (PostgreSQL) | hosted postgres with a nice dashboard, free tier is more than enough |
 | auth | JWT | team gets a token on login, admin gets a separate one with elevated role |
-| deploy | Render | free tier postgres + web service, good enough for a one-day event |
+| deploy | Render | backend web service, supabase handles the db separately |
 
 ---
 
-## database schema
+## database schema (prisma)
 
-### teams
-```sql
-CREATE TABLE teams (
-    id SERIAL PRIMARY KEY,
-    team_name VARCHAR(50) UNIQUE NOT NULL,
-    password VARCHAR(255) NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT NOW()
-);
+```prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Team {
+  id        Int      @id @default(autoincrement())
+  teamName  String   @unique @map("team_name") @db.VarChar(50)
+  password  String   @db.VarChar(255)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  bids       Bid[]
+  assignment Assignment?
+  score      Score?
+
+  @@map("teams")
+}
+
+model Prompt {
+  id           Int      @id @default(autoincrement())
+  title        String   @db.VarChar(100)
+  description  String
+  displayOrder Int      @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  bids        Bid[]
+  assignments Assignment[]
+
+  @@map("prompts")
+}
+
+model Bid {
+  id         Int      @id @default(autoincrement())
+  teamId     Int      @map("team_id")
+  promptId   Int      @map("prompt_id")
+  bidMinutes Int      @map("bid_minutes")
+  round      Int      @default(1)
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  team   Team   @relation(fields: [teamId], references: [id])
+  prompt Prompt @relation(fields: [promptId], references: [id])
+
+  // one bid per team per prompt per round
+  @@unique([teamId, promptId, round])
+  // no two teams can bid the same minutes on the same prompt in the same round
+  @@unique([promptId, bidMinutes, round])
+  @@map("bids")
+}
+
+model Assignment {
+  id         Int      @id @default(autoincrement())
+  teamId     Int      @unique @map("team_id")
+  promptId   Int      @map("prompt_id")
+  bidMinutes Int      @map("bid_minutes")
+  round      Int
+  multiplier Decimal  @db.Decimal(5, 3)
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  team   Team   @relation(fields: [teamId], references: [id])
+  prompt Prompt @relation(fields: [promptId], references: [id])
+
+  @@map("assignments")
+}
+
+model Score {
+  id         Int      @id @default(autoincrement())
+  teamId     Int      @unique @map("team_id")
+  judgeScore Int      @map("judge_score")
+  multiplier Decimal  @db.Decimal(5, 3)
+  finalScore Decimal  @map("final_score") @db.Decimal(8, 3)
+  scoredAt   DateTime @default(now()) @map("scored_at")
+
+  team Team @relation(fields: [teamId], references: [id])
+
+  @@map("scores")
+}
+
+model GameConfig {
+  id                 Int    @id @default(autoincrement())
+  baseTime           Int    @default(100) @map("base_time")
+  minBid             Int    @default(20) @map("min_bid")
+  maxTeams           Int    @default(10) @map("max_teams")
+  slotsPerPrompt     Int    @default(3) @map("slots_per_prompt")
+  bidDurationSeconds Int    @default(60) @map("bid_duration_seconds")
+  currentRound       Int    @default(0) @map("current_round")
+  currentPromptIndex Int    @default(-1) @map("current_prompt_index")
+  status             String @default("waiting") @db.VarChar(20)
+
+  @@map("game_config")
+}
 ```
 
-### prompts
-```sql
-CREATE TABLE prompts (
-    id SERIAL PRIMARY KEY,
-    title VARCHAR(100) NOT NULL,
-    description TEXT NOT NULL,
-    display_order INT NOT NULL,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-### bids
-```sql
-CREATE TABLE bids (
-    id SERIAL PRIMARY KEY,
-    team_id INT REFERENCES teams(id),
-    prompt_id INT REFERENCES prompts(id),
-    bid_minutes INT NOT NULL CHECK (bid_minutes >= 20 AND bid_minutes <= 100),
-    round INT NOT NULL DEFAULT 1 CHECK (round IN (1, 2)),
-    submitted_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(team_id, prompt_id, round),
-    UNIQUE(prompt_id, bid_minutes, round)
-);
-```
-
-the second UNIQUE constraint on `(prompt_id, bid_minutes, round)` is what prevents duplicate bids on the same prompt in the same round.
-
-### assignments
-```sql
-CREATE TABLE assignments (
-    id SERIAL PRIMARY KEY,
-    team_id INT REFERENCES teams(id) UNIQUE,
-    prompt_id INT REFERENCES prompts(id),
-    bid_minutes INT NOT NULL,
-    round INT NOT NULL,
-    multiplier DECIMAL(5,3) NOT NULL,
-    assigned_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-`team_id` is UNIQUE here because each team gets exactly one prompt.
-
-### scores
-```sql
-CREATE TABLE scores (
-    id SERIAL PRIMARY KEY,
-    team_id INT REFERENCES teams(id) UNIQUE,
-    judge_score INT NOT NULL CHECK (judge_score >= 0 AND judge_score <= 100),
-    multiplier DECIMAL(5,3) NOT NULL,
-    final_score DECIMAL(8,3) NOT NULL,
-    scored_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-### game_config
-```sql
-CREATE TABLE game_config (
-    id SERIAL PRIMARY KEY,
-    base_time INT DEFAULT 100,
-    min_bid INT DEFAULT 20,
-    max_teams INT DEFAULT 10,
-    slots_per_prompt INT DEFAULT 3,
-    bid_duration_seconds INT DEFAULT 60,
-    current_round INT DEFAULT 0,
-    current_prompt_index INT DEFAULT -1,
-    status VARCHAR(20) DEFAULT 'waiting'
-);
-```
+`teamId` is `@unique` on Assignment because each team gets exactly one prompt. the `@@unique([promptId, bidMinutes, round])` on Bid is what prevents duplicate bids on the same prompt in the same round.
 
 status can be: `waiting`, `bidding`, `paused`, `between_prompts`, `round_ended`, `coding`, `judging`, `finished`
 
@@ -347,8 +368,8 @@ bidding-platform-acm/
 │   │   ├── bidEngine.js         ← winner selection, assignment logic
 │   │   └── validators.js        ← input validation helpers
 │   └── server.js                ← express app + socket.io bootstrap
-├── db/
-│   └── init.sql                 ← full schema creation script
+├── prisma/
+│   └── schema.prisma            ← prisma schema (models, relations, constraints)
 ├── .env.example
 ├── package.json
 └── README.md
@@ -387,14 +408,15 @@ keeping this simple since its a one-day offline hackathon.
 
 ---
 
-## deployment plan (render)
+## deployment plan
 
-1. **web service**: node.js app on render free tier. handles both REST api and websocket connections.
-2. **postgresql**: render managed postgres (free tier gives 1GB, more than enough).
-3. **environment variables**: DATABASE_URL, JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD, PORT
-4. render supports websockets natively so socket.io should work without issues.
+1. **database**: supabase free tier project. gives us hosted postgres, a table editor dashboard, and connection pooling out of the box. create the project on supabase, grab the connection string for prisma.
+2. **backend**: node.js app on render. handles REST api + websocket connections. no frontend here, this repo is backend only.
+3. **environment variables**: DATABASE_URL (supabase connection string), JWT_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD, PORT
+4. render supports websockets natively so socket.io works without any extra config.
+5. run `npx prisma migrate deploy` on render as part of the build step so the schema stays in sync.
 
-one thing — render free tier spins down after inactivity. for a live hackathon you probably want to keep it warm or upgrade to the starter tier ($7/mo) for the day. worth it for reliability.
+render free tier spins down after inactivity. for a live hackathon you probably want to keep it warm or just use the starter tier ($7/mo) for the day. supabase free tier has no cold start issues so the db side is fine.
 
 ---
 
@@ -418,15 +440,4 @@ step by step, the whole flow:
 14. time's up → judges evaluate → admin enters scores
 15. system calculates final scores → leaderboard → winner announced
 
----
-
-## still to figure out
-
-- [ ] do we want a separate frontend repo or everything in one monorepo?
-- [ ] should the big screen display be a separate page/route or the same bid page?
-- [ ] do teams need to see a coding timer after they get their prompt?
-- [ ] do we want any kind of notification/sound when timer is about to end?
-
----
-
-thats the full picture. once we align on these last few things we start coding.
+thats the full picture. time to build.
