@@ -134,11 +134,20 @@ round 2 uses `k = 0.7` instead of `k = 1.0` for the multiplier. you still get re
 
 ## database schema
 
-schema lives in `prisma/schema.prisma`. 6 models — Team, Prompt, Bid, Assignment, Score, GameConfig.
+schema lives in `prisma/schema.prisma`. 8 models:
+- `Admin`: admin accounts for login and dashboard authorization
+- `AdminLog`: audit log tracking all admin actions (timer controls, score overrides, config updates, reset)
+- `Team`: team authentication and active/inactive status
+- `Prompt`: problem statements and display ordering
+- `Bid`: team bids per prompt per round with anti-collision constraint
+- `Assignment`: awarded prompts, time commitment, and computed multiplier
+- `Score`: judge evaluations and final multiplied score
+- `GameConfig`: dynamic hackathon settings and live state
 
 key constraints worth knowing:
 - `@@unique([promptId, bidMinutes, round])` on Bid — prevents two teams from bidding the same minutes on the same prompt in the same round.
 - `teamId` is `@unique` on Assignment — each team gets exactly one prompt.
+- `username` is `@unique` on Admin and `teamName` is `@unique` on Team.
 - GameConfig `status` tracks the game state: `waiting`, `bidding`, `paused`, `between_prompts`, `round_ended`, `coding`, `judging`, `finished`
 
 ---

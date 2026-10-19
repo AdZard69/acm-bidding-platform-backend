@@ -7,6 +7,29 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Admin {
+  id        Int        @id @default(autoincrement())
+  username  String     @unique @db.VarChar(50)
+  password  String     @db.VarChar(255)
+  role      String     @default("admin") @db.VarChar(20)
+  createdAt DateTime   @default(now()) @map("created_at")
+  logs      AdminLog[]
+
+  @@map("admins")
+}
+
+model AdminLog {
+  id        Int      @id @default(autoincrement())
+  adminId   Int?     @map("admin_id")
+  action    String   @db.VarChar(50)
+  details   String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  admin Admin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@map("admin_logs")
+}
+
 model Team {
   id        Int      @id @default(autoincrement())
   teamName  String   @unique @map("team_name") @db.VarChar(50)
@@ -81,15 +104,16 @@ model Score {
 }
 
 model GameConfig {
-  id                 Int    @id @default(autoincrement())
-  baseTime           Int    @default(100) @map("base_time")
-  minBid             Int    @default(20) @map("min_bid")
-  maxTeams           Int    @default(10) @map("max_teams")
-  slotsPerPrompt     Int    @default(3) @map("slots_per_prompt")
-  bidDurationSeconds Int    @default(60) @map("bid_duration_seconds")
-  currentRound       Int    @default(0) @map("current_round")
-  currentPromptIndex Int    @default(-1) @map("current_prompt_index")
-  status             String @default("waiting") @db.VarChar(20)
+  id                 Int      @id @default(autoincrement())
+  baseTime           Int      @default(100) @map("base_time")
+  minBid             Int      @default(20) @map("min_bid")
+  maxTeams           Int      @default(10) @map("max_teams")
+  slotsPerPrompt     Int      @default(3) @map("slots_per_prompt")
+  bidDurationSeconds Int      @default(60) @map("bid_duration_seconds")
+  currentRound       Int      @default(0) @map("current_round")
+  currentPromptIndex Int      @default(-1) @map("current_prompt_index")
+  status             String   @default("waiting") @db.VarChar(20)
+  updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("game_config")
 }
