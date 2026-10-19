@@ -1,4 +1,4 @@
-# bidding-platform-acm
+# acm-bidding-platform-backend
 
 backend + admin panel for "bid and code" — a hackathon format where teams bid on time commitments before coding.
 
@@ -132,109 +132,14 @@ round 2 uses `k = 0.7` instead of `k = 1.0` for the multiplier. you still get re
 
 ---
 
-## database schema (prisma)
+## database schema
 
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
+schema lives in `prisma/schema.prisma`. 6 models — Team, Prompt, Bid, Assignment, Score, GameConfig.
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
-
-model Team {
-  id        Int      @id @default(autoincrement())
-  teamName  String   @unique @map("team_name") @db.VarChar(50)
-  password  String   @db.VarChar(255)
-  isActive  Boolean  @default(true) @map("is_active")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  bids       Bid[]
-  assignment Assignment?
-  score      Score?
-
-  @@map("teams")
-}
-
-model Prompt {
-  id           Int      @id @default(autoincrement())
-  title        String   @db.VarChar(100)
-  description  String
-  displayOrder Int      @map("display_order")
-  createdAt    DateTime @default(now()) @map("created_at")
-
-  bids        Bid[]
-  assignments Assignment[]
-
-  @@map("prompts")
-}
-
-model Bid {
-  id         Int      @id @default(autoincrement())
-  teamId     Int      @map("team_id")
-  promptId   Int      @map("prompt_id")
-  bidMinutes Int      @map("bid_minutes")
-  round      Int      @default(1)
-  submittedAt DateTime @default(now()) @map("submitted_at")
-
-  team   Team   @relation(fields: [teamId], references: [id])
-  prompt Prompt @relation(fields: [promptId], references: [id])
-
-  // one bid per team per prompt per round
-  @@unique([teamId, promptId, round])
-  // no two teams can bid the same minutes on the same prompt in the same round
-  @@unique([promptId, bidMinutes, round])
-  @@map("bids")
-}
-
-model Assignment {
-  id         Int      @id @default(autoincrement())
-  teamId     Int      @unique @map("team_id")
-  promptId   Int      @map("prompt_id")
-  bidMinutes Int      @map("bid_minutes")
-  round      Int
-  multiplier Decimal  @db.Decimal(5, 3)
-  assignedAt DateTime @default(now()) @map("assigned_at")
-
-  team   Team   @relation(fields: [teamId], references: [id])
-  prompt Prompt @relation(fields: [promptId], references: [id])
-
-  @@map("assignments")
-}
-
-model Score {
-  id         Int      @id @default(autoincrement())
-  teamId     Int      @unique @map("team_id")
-  judgeScore Int      @map("judge_score")
-  multiplier Decimal  @db.Decimal(5, 3)
-  finalScore Decimal  @map("final_score") @db.Decimal(8, 3)
-  scoredAt   DateTime @default(now()) @map("scored_at")
-
-  team Team @relation(fields: [teamId], references: [id])
-
-  @@map("scores")
-}
-
-model GameConfig {
-  id                 Int    @id @default(autoincrement())
-  baseTime           Int    @default(100) @map("base_time")
-  minBid             Int    @default(20) @map("min_bid")
-  maxTeams           Int    @default(10) @map("max_teams")
-  slotsPerPrompt     Int    @default(3) @map("slots_per_prompt")
-  bidDurationSeconds Int    @default(60) @map("bid_duration_seconds")
-  currentRound       Int    @default(0) @map("current_round")
-  currentPromptIndex Int    @default(-1) @map("current_prompt_index")
-  status             String @default("waiting") @db.VarChar(20)
-
-  @@map("game_config")
-}
-```
-
-`teamId` is `@unique` on Assignment because each team gets exactly one prompt. the `@@unique([promptId, bidMinutes, round])` on Bid is what prevents duplicate bids on the same prompt in the same round.
-
-status can be: `waiting`, `bidding`, `paused`, `between_prompts`, `round_ended`, `coding`, `judging`, `finished`
+key constraints worth knowing:
+- `@@unique([promptId, bidMinutes, round])` on Bid — prevents two teams from bidding the same minutes on the same prompt in the same round.
+- `teamId` is `@unique` on Assignment — each team gets exactly one prompt.
+- GameConfig `status` tracks the game state: `waiting`, `bidding`, `paused`, `between_prompts`, `round_ended`, `coding`, `judging`, `finished`
 
 ---
 

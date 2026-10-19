@@ -1,0 +1,46 @@
+{
+  "name": "acm-bidding-platform-backend",
+  "version": "1.0.0",
+  "description": "Backend for Bid and Code hackathon bidding platform with real-time WebSockets and dynamic multiplier scoring",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AdZard69/acm-bidding-platform-backend.git"
+  },
+  "keywords": [
+    "hackathon",
+    "bidding",
+    "realtime",
+    "socketio",
+    "express",
+    "prisma",
+    "supabase"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AdZard69/acm-bidding-platform-backend/issues"
+  },
+  "homepage": "https://github.com/AdZard69/acm-bidding-platform-backend#readme",
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7",
+    "prisma": "^5.22.0"
+  }
+}
