@@ -78,6 +78,36 @@ const validateTeamInput = (teamName, password) => {
 };
 
 /**
+ * Validates a password change payload
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {{ isValid: boolean, error?: string }}
+ */
+const validatePasswordChange = (currentPassword, newPassword) => {
+  if (!currentPassword || typeof currentPassword !== 'string') {
+    return { isValid: false, error: 'Current password is required' };
+  }
+
+  if (!newPassword || typeof newPassword !== 'string') {
+    return { isValid: false, error: 'New password is required' };
+  }
+
+  if (newPassword.length < 6) {
+    return { isValid: false, error: 'New password must be at least 6 characters long' };
+  }
+
+  if (newPassword.length > 72) {
+    return { isValid: false, error: 'New password cannot exceed 72 characters' };
+  }
+
+  if (newPassword === currentPassword) {
+    return { isValid: false, error: 'New password must be different from the current one' };
+  }
+
+  return { isValid: true };
+};
+
+/**
  * Validates prompt creation payload
  * @param {string} title
  * @param {string} description
@@ -159,6 +189,7 @@ module.exports = {
   validateBid,
   validateScore,
   validateTeamInput,
+  validatePasswordChange,
   validatePromptInput,
   validateGameConfig
 };
