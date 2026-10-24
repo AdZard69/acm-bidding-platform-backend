@@ -519,6 +519,156 @@ Errors:
 
 ---
 
+## Team Bidding (team only)
+
+### GET /api/bid/current
+
+Returns the current active prompt, countdown timer, existing bids on the prompt, and the calling team's placed bid.
+
+No body params.
+
+```json
+{
+  "success": true,
+  "status": "bidding",
+  "currentRound": 1,
+  "currentPrompt": {
+    "id": 1,
+    "title": "Reverse a Linked List",
+    "description": "Solve in O(N)",
+    "displayOrder": 1
+  },
+  "secondsRemaining": 48,
+  "isPaused": false,
+  "bids": [
+    {
+      "teamId": 2,
+      "teamName": "Beta",
+      "bidMinutes": 60,
+      "submittedAt": "2026-10-24T15:00:12.000Z"
+    }
+  ],
+  "myBid": null,
+  "hasAssignment": false,
+  "assignment": null
+}
+```
+
+### POST /api/bid/place
+
+Places a time commitment bid in minutes for the currently active prompt. Only permitted when round status is `bidding`. Enforces anti-collision: no duplicate bids on the same prompt within the same round.
+
+Params (JSON body):
+- `bidMinutes` (required, integer between `minBid` and `baseTime`, e.g. 30 to 120).
+
+```json
+{
+  "success": true,
+  "message": "Bid placed successfully",
+  "bid": {
+    "id": 1,
+    "teamId": 1,
+    "teamName": "Alpha",
+    "promptId": 1,
+    "bidMinutes": 45,
+    "round": 1,
+    "submittedAt": "2026-10-24T15:00:15.000Z"
+  }
+}
+```
+
+Errors:
+- `400` Missing or invalid bid time (must be integer within range)
+- `400` Bidding is not currently active / round paused
+- `400` Team has already been assigned a prompt
+- `400` Team has already placed a bid for this prompt (use update endpoint)
+- `403` Team has been deactivated
+- `409` A bid of X minutes has already been placed by another team
+
+### PUT /api/bid/update
+
+Updates an existing bid placed by this team on the active prompt before timer ends.
+
+Params (JSON body):
+- `bidMinutes` (required, integer between `minBid` and `baseTime`, must differ from current bid).
+
+```json
+{
+  "success": true,
+  "message": "Bid updated successfully",
+  "bid": {
+    "id": 1,
+    "teamId": 1,
+    "teamName": "Alpha",
+    "promptId": 1,
+    "bidMinutes": 40,
+    "round": 1,
+    "submittedAt": "2026-10-24T15:00:25.000Z"
+  }
+}
+```
+
+Errors:
+- `400` New bid must be different from current bid
+- `404` No existing bid found to update for this prompt
+- `409` A bid of X minutes has already been placed by another team
+
+### GET /api/bid/my-bids
+
+Returns all bids placed by the calling team across all rounds and prompts.
+
+No body params.
+
+```json
+{
+  "success": true,
+  "bids": [
+    {
+      "id": 1,
+      "promptId": 1,
+      "promptTitle": "Reverse a Linked List",
+      "displayOrder": 1,
+      "round": 1,
+      "bidMinutes": 40,
+      "submittedAt": "2026-10-24T15:00:25.000Z"
+    }
+  ]
+}
+```
+
+### GET /api/bid/assignment
+
+Retrieves the team's assigned prompt, time commitment, and computed multiplier. Returns `assignment: null` if no prompt has been assigned yet.
+
+No body params.
+
+```json
+{
+  "success": true,
+  "assignment": {
+    "id": 1,
+    "teamId": 1,
+    "promptId": 1,
+    "title": "Reverse a Linked List",
+    "description": "Solve in O(N)",
+    "displayOrder": 1,
+    "bidMinutes": 40,
+    "round": 1,
+    "multiplier": 1.948,
+    "codingTimeMinutes": 40,
+    "assignedAt": "2026-10-24T15:01:00.000Z"
+  }
+}
+```
+
+### GET /api/bid/leaderboard
+
+Returns the full leaderboard with rankings and final scores for authenticated teams.
+
+No body params.
+
+---
+
 ## Unauthenticated responses
 
 Any protected endpoint without a valid token returns:

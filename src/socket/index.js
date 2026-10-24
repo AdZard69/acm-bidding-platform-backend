@@ -3,44 +3,8 @@ const { authSocket } = require('../middleware/authSocket');
 const { ROLES } = require('../utils/token');
 const logger = require('../utils/logger');
 const env = require('../config/env');
-const registerAdminHandlers = require('./adminHandler');
 
 let ioInstance = null;
-
-/**
- * Initializes Socket.IO with the HTTP server
- * @param {import('http').Server} server
- * @returns {import('socket.io').Server}
- */
-const initSocket = (server) => {
-  ioInstance = new Server(server, {
-    cors: {
-      origin: env.CORS_ORIGIN || '*',
-      methods: ['GET', 'POST'],
-      exposedHeaders: ['Authorization']
-    }
-  });
-
-  ioInstance.use(authSocket);
-
-  ioInstance.on('connection', (socket) => {
-    logger.info(`Socket connected: ${socket.id} (role: ${socket.user?.role})`);
-
-    if (socket.user?.role === ROLES.ADMIN) {
-      socket.join('admin');
-      registerAdminHandlers(ioInstance, socket);
-    } else if (socket.user?.role === ROLES.TEAM) {
-      socket.join(`team:${socket.user.teamId}`);
-      socket.join('teams');
-    }
-
-    socket.on('disconnect', () => {
-      logger.info(`Socket disconnected: ${socket.id}`);
-    });
-  });
-
-  return ioInstance;
-};
 
 /**
  * Returns the current Socket.IO instance or null
@@ -69,6 +33,45 @@ const sendToTeam = (teamId, event, data) => {
   if (ioInstance) {
     ioInstance.to(`team:${teamId}`).emit(event, data);
   }
+};
+
+/**
+ * Initializes Socket.IO with the HTTP server
+ * @param {import('http').Server} server
+ * @returns {import('socket.io').Server}
+ */
+const initSocket = (server) => {
+  const registerAdminHandlers = require('./adminHandler');
+  const registerBidHandlers = require('./bidHandler');
+
+  ioInstance = new Server(server, {
+    cors: {
+      origin: env.CORS_ORIGIN || '*',
+      methods: ['GET', 'POST'],
+      exposedHeaders: ['Authorization']
+    }
+  });
+
+  ioInstance.use(authSocket);
+
+  ioInstance.on('connection', (socket) => {
+    logger.info(`Socket connected: ${socket.id} (role: ${socket.user?.role})`);
+
+    if (socket.user?.role === ROLES.ADMIN) {
+      socket.join('admin');
+      registerAdminHandlers(ioInstance, socket);
+    } else if (socket.user?.role === ROLES.TEAM) {
+      socket.join(`team:${socket.user.teamId}`);
+      socket.join('teams');
+      registerBidHandlers(ioInstance, socket);
+    }
+
+    socket.on('disconnect', () => {
+      logger.info(`Socket disconnected: ${socket.id}`);
+    });
+  });
+
+  return ioInstance;
 };
 
 module.exports = {

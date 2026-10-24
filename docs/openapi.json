@@ -5,592 +5,2035 @@
     "version": "1.0.0",
     "description": "Backend for the ACM bidding platform: game teams bid code time on prompts, judges score the results."
   },
-  "servers": [{ "url": "http://localhost:5000/api" }],
+  "servers": [
+    {
+      "url": "http://localhost:5000/api"
+    }
+  ],
   "tags": [
-    { "name": "Health" },
-    { "name": "Auth", "description": "Login, session identity, logout, password changes" },
-    { "name": "Admin · Teams", "description": "Team management (admin JWT required)" },
-    { "name": "Admin · Prompts", "description": "Prompt management (admin JWT required)" },
-    { "name": "Admin · Rounds", "description": "Round & timer flow controls (admin JWT required)" },
-    { "name": "Admin · Scores & Leaderboard", "description": "Judge scoring and leaderboard (admin JWT required)" },
-    { "name": "Admin · System", "description": "System maintenance and reset (admin JWT required)" }
+    {
+      "name": "Health"
+    },
+    {
+      "name": "Auth",
+      "description": "Login, session identity, logout, password changes"
+    },
+    {
+      "name": "Admin · Teams",
+      "description": "Team management (admin JWT required)"
+    },
+    {
+      "name": "Admin · Prompts",
+      "description": "Prompt management (admin JWT required)"
+    },
+    {
+      "name": "Admin · Rounds",
+      "description": "Round & timer flow controls (admin JWT required)"
+    },
+    {
+      "name": "Admin · Scores & Leaderboard",
+      "description": "Judge scoring and leaderboard (admin JWT required)"
+    },
+    {
+      "name": "Admin · System",
+      "description": "System maintenance and reset (admin JWT required)"
+    },
+    {
+      "name": "Team · Bidding",
+      "description": "Team bidding endpoints (team JWT required)"
+    }
   ],
   "paths": {
     "/health": {
       "get": {
-        "tags": ["Health"],
+        "tags": [
+          "Health"
+        ],
         "summary": "Server health check",
         "security": [],
         "responses": {
           "200": {
             "description": "Server is up",
-            "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "status": { "type": "string" }, "uptime": { "type": "number" } } } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "uptime": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
     },
     "/auth/team/login": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Team login (public)",
         "security": [],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamLoginInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamLoginInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/TeamAuth" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "description": "Team has been deactivated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "200": {
+            "$ref": "#/components/responses/TeamAuth"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Team has been deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/auth/admin/login": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Admin login (public)",
         "security": [],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminLoginInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/AdminAuth" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "200": {
+            "$ref": "#/components/responses/AdminAuth"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/auth/me": {
       "get": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Identity behind the token",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Token identity (team or admin depending on role)",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Identity" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Identity"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/auth/logout": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Logout (stateless — client drops the token)",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "Acknowledgement",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessMessage" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessMessage"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/auth/team/change-password": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Change the logged-in team's password",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordChangeInput" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Password updated",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/SuccessMessage" }, { "type": "object", "properties": { "teamId": { "type": "integer" }, "teamName": { "type": "string" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessMessage"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "teamId": {
+                          "type": "integer"
+                        },
+                        "teamName": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/auth/admin/change-password": {
       "post": {
-        "tags": ["Auth"],
+        "tags": [
+          "Auth"
+        ],
         "summary": "Change the logged-in admin's password",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PasswordChangeInput" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChangeInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Password updated",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/SuccessMessage" }, { "type": "object", "properties": { "adminId": { "type": "integer" }, "username": { "type": "string" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessMessage"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "adminId": {
+                          "type": "integer"
+                        },
+                        "username": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/admin/teams": {
       "get": {
-        "tags": ["Admin · Teams"],
+        "tags": [
+          "Admin · Teams"
+        ],
         "summary": "List all teams",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "All teams",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "teams": { "type": "array", "items": { "$ref": "#/components/schemas/Team" } } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "teams": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Team"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "post": {
-        "tags": ["Admin · Teams"],
+        "tags": [
+          "Admin · Teams"
+        ],
         "summary": "Create a team",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamCreateInput" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamCreateInput"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Team created",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "team": { "$ref": "#/components/schemas/Team" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "team": {
+                          "$ref": "#/components/schemas/Team"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       }
     },
     "/admin/teams/{id}": {
       "put": {
-        "tags": ["Admin · Teams"],
+        "tags": [
+          "Admin · Teams"
+        ],
         "summary": "Update team info",
         "description": "`teamName`, `password`, and `isActive` are all optional, but at least one must be provided.",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/TeamId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamUpdateInput" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TeamId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamUpdateInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Team updated",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "team": { "$ref": "#/components/schemas/Team" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "team": {
+                          "$ref": "#/components/schemas/Team"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       },
       "delete": {
-        "tags": ["Admin · Teams"],
+        "tags": [
+          "Admin · Teams"
+        ],
         "summary": "Remove team (also removes its bids, assignment, and score)",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/TeamId" }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TeamId"
+          }
+        ],
         "responses": {
-          "200": { "description": "Team removed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessMessage" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "Team removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/admin/teams/{id}/toggle": {
       "patch": {
-        "tags": ["Admin · Teams"],
+        "tags": [
+          "Admin · Teams"
+        ],
         "summary": "Activate / deactivate team",
         "description": "Deactivated teams are rejected with 403 at login.",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/TeamId" }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TeamId"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Team toggled",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "team": { "$ref": "#/components/schemas/Team" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "team": {
+                          "$ref": "#/components/schemas/Team"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/admin/prompts": {
       "get": {
-        "tags": ["Admin · Prompts"],
+        "tags": [
+          "Admin · Prompts"
+        ],
         "summary": "List all prompts (sorted by displayOrder)",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
           "200": {
             "description": "All prompts",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "prompts": { "type": "array", "items": { "$ref": "#/components/schemas/Prompt" } } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "prompts": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Prompt"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "post": {
-        "tags": ["Admin · Prompts"],
+        "tags": [
+          "Admin · Prompts"
+        ],
         "summary": "Add a prompt",
         "description": "`displayOrder` is optional and auto-assigns `max + 1` when omitted.",
-        "security": [{ "bearerAuth": [] }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PromptCreateInput" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptCreateInput"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "Prompt created",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "prompt": { "$ref": "#/components/schemas/Prompt" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "prompt": {
+                          "$ref": "#/components/schemas/Prompt"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/prompts/{id}": {
       "put": {
-        "tags": ["Admin · Prompts"],
+        "tags": [
+          "Admin · Prompts"
+        ],
         "summary": "Edit prompt",
         "description": "`title`, `description`, and `displayOrder` are all optional, but at least one must be provided.",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/PromptId" }],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PromptUpdateInput" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PromptId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PromptUpdateInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Prompt updated",
-            "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "prompt": { "$ref": "#/components/schemas/Prompt" } } }] } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Success"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "prompt": {
+                          "$ref": "#/components/schemas/Prompt"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       },
       "delete": {
-        "tags": ["Admin · Prompts"],
+        "tags": [
+          "Admin · Prompts"
+        ],
         "summary": "Remove prompt (also removes its bids and assignments)",
-        "security": [{ "bearerAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/PromptId" }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PromptId"
+          }
+        ],
         "responses": {
-          "200": { "description": "Prompt removed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessMessage" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "Prompt removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessMessage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/admin/round/start": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin · Rounds"
+        ],
         "summary": "Start round 1 (or round 2)",
         "description": "Reveals the first prompt of the round and starts countdown timer.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": false,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundStartInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundStartInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Round started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundStartResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Round started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoundStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/pause": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin · Rounds"
+        ],
         "summary": "Pause current timer",
         "description": "Freezes bidding countdown and sets game status to paused.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Round paused", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundPauseResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Round paused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoundPauseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/resume": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin · Rounds"
+        ],
         "summary": "Resume timer",
         "description": "Resumes the paused timer and restores game status to bidding.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Round resumed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundResumeResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Round resumed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoundResumeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/extend": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin · Rounds"
+        ],
         "summary": "Add time to current timer",
         "description": "Adds extraSeconds to the active or paused timer.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundExtendInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundExtendInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Timer extended", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundExtendResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Timer extended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoundExtendResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/next-prompt": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin · Rounds"
+        ],
         "summary": "Force skip to next prompt",
         "description": "Evaluates current prompt bids, assigns winners, and advances to the next prompt or ends round.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Advanced to next prompt or round ended", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" } } } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Advanced to next prompt or round ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/end": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin · Rounds"
+        ],
         "summary": "Force end current round",
         "description": "Stops timer, awards any placed bids for current prompt, and ends the round.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Round ended", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" }, "round": { "type": "integer" }, "status": { "type": "string" }, "summary": { "type": "object" } } } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Round ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "round": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/scores/{teamId}": {
       "post": {
-        "tags": ["Admin · Scores & Leaderboard"],
+        "tags": [
+          "Admin · Scores & Leaderboard"
+        ],
         "summary": "Submit or update judge score for a team",
         "description": "Calculates final score = judgeScore * multiplier from team assignment.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "parameters": [
-          { "name": "teamId", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "Team ID" }
+          {
+            "name": "teamId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Team ID"
+          }
         ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/JudgeScoreInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JudgeScoreInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Score submitted/updated", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" }, "score": { "type": "object" } } } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "Score submitted/updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "score": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/admin/leaderboard": {
       "get": {
-        "tags": ["Admin · Scores & Leaderboard"],
+        "tags": [
+          "Admin · Scores & Leaderboard"
+        ],
         "summary": "Full leaderboard with final scores",
         "description": "Returns all teams ranked by finalScore descending.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Full leaderboard", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "leaderboard": { "type": "array", "items": { "type": "object" } } } } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Full leaderboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "leaderboard": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/reset": {
       "post": {
-        "tags": ["Admin · System"],
+        "tags": [
+          "Admin · System"
+        ],
         "summary": "Reset game state",
         "description": "Nuclear option: wipes bids, assignments, scores, and resets game config to waiting.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": false,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ResetInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Game reset", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" }, "status": { "type": "string" } } } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Game reset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/config": {
       "get": {
-        "tags": ["Admin · System"],
+        "tags": [
+          "Admin · System"
+        ],
         "summary": "Get current game settings",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Current game settings", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "config": { "$ref": "#/components/schemas/GameConfig" } } } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Current game settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "config": {
+                      "$ref": "#/components/schemas/GameConfig"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "put": {
-        "tags": ["Admin · System"],
+        "tags": [
+          "Admin · System"
+        ],
         "summary": "Update game settings",
         "description": "Updates game configuration. Only allowed when round is not actively in progress.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GameConfigUpdateInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GameConfigUpdateInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Settings updated", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" }, "config": { "$ref": "#/components/schemas/GameConfig" } } } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Settings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "config": {
+                      "$ref": "#/components/schemas/GameConfig"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/bid/current": {
+      "get": {
+        "tags": [
+          "Team · Bidding"
+        ],
+        "summary": "Get current prompt, countdown timer, existing bids, and team status",
+        "responses": {
+          "200": {
+            "description": "Current bidding status retrieved"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/bid/place": {
+      "post": {
+        "tags": [
+          "Team · Bidding"
+        ],
+        "summary": "Place a time commitment bid on the current active prompt",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "bidMinutes"
+                ],
+                "properties": {
+                  "bidMinutes": {
+                    "type": "integer",
+                    "minimum": 30,
+                    "maximum": 120,
+                    "example": 45
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Bid placed successfully"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/bid/update": {
+      "put": {
+        "tags": [
+          "Team · Bidding"
+        ],
+        "summary": "Update an existing bid before the prompt countdown expires",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "bidMinutes"
+                ],
+                "properties": {
+                  "bidMinutes": {
+                    "type": "integer",
+                    "minimum": 30,
+                    "maximum": 120,
+                    "example": 40
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bid updated successfully"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/bid/my-bids": {
+      "get": {
+        "tags": [
+          "Team · Bidding"
+        ],
+        "summary": "List all bids placed by this team",
+        "responses": {
+          "200": {
+            "description": "List of team bids"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/bid/assignment": {
+      "get": {
+        "tags": [
+          "Team · Bidding"
+        ],
+        "summary": "Get assigned prompt and multiplier for this team",
+        "responses": {
+          "200": {
+            "description": "Team prompt assignment"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/bid/leaderboard": {
+      "get": {
+        "tags": [
+          "Team · Bidding"
+        ],
+        "summary": "View public hackathon leaderboard",
+        "responses": {
+          "200": {
+            "description": "Leaderboard retrieved"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Get a token from /auth/team/login or /auth/admin/login" }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Get a token from /auth/team/login or /auth/admin/login"
+      }
     },
     "parameters": {
-      "TeamId": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "Team id" },
-      "PromptId": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer" }, "description": "Prompt id" }
+      "TeamId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        },
+        "description": "Team id"
+      },
+      "PromptId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "integer"
+        },
+        "description": "Prompt id"
+      }
     },
     "responses": {
-      "BadRequest": { "description": "Invalid request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Unauthorized": { "description": "Missing / invalid / expired token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Forbidden": { "description": "Wrong role for this endpoint", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "NotFound": { "description": "Resource not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Conflict": { "description": "Unique constraint violation", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing / invalid / expired token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Wrong role for this endpoint",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Unique constraint violation",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
       "TeamAuth": {
         "description": "Team token issued (also returned as `Authorization: Bearer <token>` response header)",
-        "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "token": { "type": "string" }, "teamId": { "type": "integer" }, "teamName": { "type": "string" } } }] } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Success"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "teamId": {
+                      "type": "integer"
+                    },
+                    "teamName": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
       },
       "AdminAuth": {
         "description": "Admin token issued (also returned as `Authorization: Bearer <token>` response header)",
-        "content": { "application/json": { "schema": { "allOf": [{ "$ref": "#/components/schemas/Success" }, { "type": "object", "properties": { "token": { "type": "string" }, "role": { "type": "string" }, "adminId": { "type": "integer" }, "username": { "type": "string" } } }] } } }
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Success"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "adminId": {
+                      "type": "integer"
+                    },
+                    "username": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
       }
     },
     "schemas": {
-      "Error": { "type": "object", "properties": { "success": { "type": "boolean" }, "error": { "type": "object", "properties": { "message": { "type": "string" } } } } },
-      "Success": { "type": "object", "properties": { "success": { "type": "boolean" } } },
-      "SuccessMessage": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" } } },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Success": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SuccessMessage": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "Team": {
         "type": "object",
-        "properties": { "id": { "type": "integer" }, "teamName": { "type": "string" }, "isActive": { "type": "boolean" }, "createdAt": { "type": "string", "format": "date-time" } }
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "teamName": {
+            "type": "string"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "Prompt": {
         "type": "object",
-        "properties": { "id": { "type": "integer" }, "title": { "type": "string", "maxLength": 100 }, "description": { "type": "string" }, "displayOrder": { "type": "integer" }, "createdAt": { "type": "string", "format": "date-time" } }
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string"
+          },
+          "displayOrder": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
       },
       "Identity": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean" },
-          "sub": { "type": "string" },
-          "role": { "type": "string", "enum": ["team", "admin"] },
-          "teamId": { "type": "integer", "description": "present when role=team" },
-          "teamName": { "type": "string", "description": "present when role=team" },
-          "adminId": { "type": "integer", "description": "present when role=admin" },
-          "username": { "type": "string", "description": "present when role=admin" }
+          "success": {
+            "type": "boolean"
+          },
+          "sub": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "team",
+              "admin"
+            ]
+          },
+          "teamId": {
+            "type": "integer",
+            "description": "present when role=team"
+          },
+          "teamName": {
+            "type": "string",
+            "description": "present when role=team"
+          },
+          "adminId": {
+            "type": "integer",
+            "description": "present when role=admin"
+          },
+          "username": {
+            "type": "string",
+            "description": "present when role=admin"
+          }
         }
       },
-      "TeamLoginInput": { "required": ["teamName", "password"], "type": "object", "properties": { "teamName": { "type": "string" }, "password": { "type": "string" } } },
-      "AdminLoginInput": { "required": ["username", "password"], "type": "object", "properties": { "username": { "type": "string" }, "password": { "type": "string" } } },
-      "PasswordChangeInput": { "required": ["currentPassword", "newPassword"], "type": "object", "properties": { "currentPassword": { "type": "string" }, "newPassword": { "type": "string", "minLength": 6, "maxLength": 72 } } },
-      "TeamCreateInput": { "required": ["teamName", "password"], "type": "object", "properties": { "teamName": { "type": "string", "minLength": 2, "maxLength": 50 }, "password": { "type": "string", "minLength": 4, "maxLength": 72 } } },
+      "TeamLoginInput": {
+        "required": [
+          "teamName",
+          "password"
+        ],
+        "type": "object",
+        "properties": {
+          "teamName": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminLoginInput": {
+        "required": [
+          "username",
+          "password"
+        ],
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        }
+      },
+      "PasswordChangeInput": {
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ],
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string"
+          },
+          "newPassword": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 72
+          }
+        }
+      },
+      "TeamCreateInput": {
+        "required": [
+          "teamName",
+          "password"
+        ],
+        "type": "object",
+        "properties": {
+          "teamName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 50
+          },
+          "password": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 72
+          }
+        }
+      },
       "TeamUpdateInput": {
         "type": "object",
         "minProperties": 1,
-        "properties": { "teamName": { "type": "string", "maxLength": 50 }, "password": { "type": "string", "minLength": 4, "maxLength": 72 }, "isActive": { "type": "boolean" } }
+        "properties": {
+          "teamName": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "password": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 72
+          },
+          "isActive": {
+            "type": "boolean"
+          }
+        }
       },
-      "PromptCreateInput": { "required": ["title", "description"], "type": "object", "properties": { "title": { "type": "string", "maxLength": 100 }, "description": { "type": "string" }, "displayOrder": { "type": "integer", "minimum": 1 } } },
-      "PromptUpdateInput": { "type": "object", "minProperties": 1, "properties": { "title": { "type": "string", "maxLength": 100 }, "description": { "type": "string" }, "displayOrder": { "type": "integer", "minimum": 1 } } },
+      "PromptCreateInput": {
+        "required": [
+          "title",
+          "description"
+        ],
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string"
+          },
+          "displayOrder": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "PromptUpdateInput": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string"
+          },
+          "displayOrder": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
       "RoundStartInput": {
         "type": "object",
         "properties": {
-          "round": { "type": "integer", "enum": [1, 2] },
-          "roundNumber": { "type": "integer", "enum": [1, 2] }
+          "round": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ]
+          },
+          "roundNumber": {
+            "type": "integer",
+            "enum": [
+              1,
+              2
+            ]
+          }
         }
       },
       "RoundExtendInput": {
         "type": "object",
         "properties": {
-          "extraSeconds": { "type": "integer", "minimum": 1 },
-          "seconds": { "type": "integer", "minimum": 1 }
+          "extraSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       },
       "RoundStartResponse": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean" },
-          "message": { "type": "string" },
-          "round": { "type": "integer" },
-          "currentPrompt": { "$ref": "#/components/schemas/Prompt" },
-          "secondsRemaining": { "type": "integer" },
-          "status": { "type": "string" }
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "currentPrompt": {
+            "$ref": "#/components/schemas/Prompt"
+          },
+          "secondsRemaining": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
         }
       },
       "RoundPauseResponse": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean" },
-          "message": { "type": "string" },
-          "round": { "type": "integer" },
-          "secondsRemaining": { "type": "integer" },
-          "status": { "type": "string" }
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "secondsRemaining": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
         }
       },
       "RoundResumeResponse": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean" },
-          "message": { "type": "string" },
-          "round": { "type": "integer" },
-          "secondsRemaining": { "type": "integer" },
-          "status": { "type": "string" }
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "secondsRemaining": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          }
         }
       },
       "RoundExtendResponse": {
         "type": "object",
         "properties": {
-          "success": { "type": "boolean" },
-          "message": { "type": "string" },
-          "extraSeconds": { "type": "integer" },
-          "secondsRemaining": { "type": "integer" }
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "extraSeconds": {
+            "type": "integer"
+          },
+          "secondsRemaining": {
+            "type": "integer"
+          }
         }
       },
       "JudgeScoreInput": {
-        "required": ["judgeScore"],
+        "required": [
+          "judgeScore"
+        ],
         "type": "object",
         "properties": {
-          "judgeScore": { "type": "integer", "minimum": 0, "maximum": 100 }
+          "judgeScore": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          }
         }
       },
       "ResetInput": {
         "type": "object",
         "properties": {
-          "wipeTeams": { "type": "boolean" },
-          "wipePrompts": { "type": "boolean" },
-          "wipeAll": { "type": "boolean" }
+          "wipeTeams": {
+            "type": "boolean"
+          },
+          "wipePrompts": {
+            "type": "boolean"
+          },
+          "wipeAll": {
+            "type": "boolean"
+          }
         }
       },
       "GameConfigUpdateInput": {
         "type": "object",
         "minProperties": 1,
         "properties": {
-          "baseTime": { "type": "integer", "minimum": 1 },
-          "minBid": { "type": "integer", "minimum": 1 },
-          "maxTeams": { "type": "integer", "minimum": 1, "maximum": 50 },
-          "slotsPerPrompt": { "type": "integer", "minimum": 1 },
-          "bidDurationSeconds": { "type": "integer", "minimum": 10 }
+          "baseTime": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minBid": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxTeams": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          },
+          "slotsPerPrompt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "bidDurationSeconds": {
+            "type": "integer",
+            "minimum": 10
+          }
         }
       },
       "GameConfig": {
         "type": "object",
         "properties": {
-          "id": { "type": "integer" },
-          "baseTime": { "type": "integer" },
-          "minBid": { "type": "integer" },
-          "maxTeams": { "type": "integer" },
-          "slotsPerPrompt": { "type": "integer" },
-          "bidDurationSeconds": { "type": "integer" },
-          "currentRound": { "type": "integer" },
-          "currentPromptIndex": { "type": "integer" },
-          "status": { "type": "string" },
-          "updatedAt": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "integer"
+          },
+          "baseTime": {
+            "type": "integer"
+          },
+          "minBid": {
+            "type": "integer"
+          },
+          "maxTeams": {
+            "type": "integer"
+          },
+          "slotsPerPrompt": {
+            "type": "integer"
+          },
+          "bidDurationSeconds": {
+            "type": "integer"
+          },
+          "currentRound": {
+            "type": "integer"
+          },
+          "currentPromptIndex": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       }
     }
