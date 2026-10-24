@@ -161,6 +161,9 @@ key constraints worth knowing:
 
 ## api routes
 
+Interactive Swagger docs live at `/api/docs` (spec: `/api/docs.json`, source file `docs/openapi.json`).
+The spec covers the routes implemented so far — auth, admin · teams, admin · prompts, admin · rounds.
+
 ### auth
 
 ```
@@ -171,7 +174,14 @@ POST /api/auth/team/login
 POST /api/auth/admin/login
   body: { username, password }
   returns: { token, role: "admin" }
+
+GET  /api/auth/me                → identity behind the token (team or admin)
+POST /api/auth/logout             → stateless, the client drops the token
+POST /api/auth/team/change-password  → { currentPassword, newPassword }
+POST /api/auth/admin/change-password → { currentPassword, newPassword }
 ```
+
+send the token as `Authorization: Bearer <token>` on every protected route.
 
 ### admin routes (all require admin JWT)
 
@@ -284,6 +294,7 @@ acm-bidding-platform-backend/
 │   │   ├── bidController.js     ← bid business logic
 │   │   └── scoreController.js   ← score & leaderboard logic
 │   ├── middleware/
+│   │   ├── auth.js              ← shared JWT verification + role gate
 │   │   ├── authAdmin.js         ← verify admin JWT
 │   │   ├── authSocket.js        ← socket handshake auth
 │   │   ├── authTeam.js          ← verify team JWT
@@ -295,6 +306,7 @@ acm-bidding-platform-backend/
 │   │   ├── index.js             ← api router aggregator
 │   │   └── scores.js            ← score submission + leaderboard
 │   ├── services/
+│   │   ├── authService.js       ← login, password change, admin bootstrap
 │   │   ├── bidEngine.js         ← winner selection, assignment logic
 │   │   ├── gameService.js       ← round/prompt flow management
 │   │   └── multiplierService.js ← the multiplier formula
@@ -304,9 +316,18 @@ acm-bidding-platform-backend/
 │   │   ├── index.js             ← socket.io init + rooms
 │   │   └── timerManager.js      ← countdown logic, pause/resume/extend
 │   ├── utils/
+│   │   ├── apiError.js          ← http aware error type
 │   │   ├── logger.js            ← console logging helper
+│   │   ├── password.js          ← bcrypt hashing helpers
+│   │   ├── token.js             ← JWT sign/verify helpers
 │   │   └── validators.js        ← input validation helpers
 │   └── server.js                ← express app + socket.io bootstrap
+├── scripts/
+│   └── migrate-test-db.js       ← applies migrations to the test database
+├── tests/
+│   ├── auth.integration.test.js ← auth endpoints against a real database
+│   ├── unit/                    ← token + password unit tests
+│   └── helpers/setup.js         ← test database bootstrap
 ├── .env.example
 ├── .gitignore
 ├── package.json
@@ -343,6 +364,60 @@ keeping this simple since its a one-day offline hackathon.
 5. admin logs in separately with admin creds, JWT has `{ role: "admin" }`
 6. socket connections also authenticate using the same JWT (sent in the handshake)
 7. tokens don't need to expire for a hackathon — keep them valid for 24 hours and call it a day
+
+what the implementation does with that:
+
+- passwords are stored as bcrypt hashes, never in plain text
+- the admin account is bootstrapped from `ADMIN_USERNAME` / `ADMIN_PASSWORD` on startup, and only
+  when no account with that username exists — changing the admin password through the api survives
+  a redeploy
+- login is rejected for deactivated teams, so the admin toggle works from the first login
+- tokens are stateless, so `logout` is a client side discard. no refresh tokens, no revocation list
+- `GET /api/auth/me` returns the identity behind a token, handy for the client to restore a session
+
+---
+
+## environment variables
+
+copy `.env.example` to `.env` and fill it in. `.env` is gitignored, never commit it.
+
+| variable | purpose | default |
+|----------|---------|---------|
+| `DATABASE_URL` | postgres connection string | — |
+| `DATABASE_URL_TEST` | database used by the test suite | — |
+| `JWT_SECRET` | signing secret for the tokens | dev fallback, change it |
+| `JWT_EXPIRES_IN` | token lifetime | `24h` |
+| `JWT_ISSUER` | token issuer claim | `acm-bidding-platform` |
+| `BCRYPT_SALT_ROUNDS` | bcrypt cost | `10` |
+| `ADMIN_USERNAME` | admin account bootstrapped on startup | `admin` |
+| `ADMIN_PASSWORD` | password for that admin account | `admin123` |
+| `PORT` | http port | `5000` |
+| `CORS_ORIGIN` | allowed origin | `*` |
+
+---
+
+## running locally
+
+```bash
+npm install
+cp .env.example .env          # then point DATABASE_URL at your postgres
+npx prisma migrate dev        # creates the tables
+npm run dev
+```
+
+the admin account is created on the first boot from `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
+
+### tests
+
+the suite runs against a real postgres test database (`DATABASE_URL_TEST`), not a mock.
+
+```bash
+docker run -d --name acm-auth-db -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=acm_dev -p 5432:5432 postgres:16-alpine
+docker exec acm-auth-db createdb -U postgres acm_test
+
+npm test                      # migrates the test db, then runs node:test
+```
 
 ---
 

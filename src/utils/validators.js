@@ -47,6 +47,10 @@ const validateScore = (score) => {
     return { isValid: false, error: 'Judge score must be a valid number' };
   }
 
+  if (!Number.isInteger(numericScore)) {
+    return { isValid: false, error: 'Judge score must be a whole number' };
+  }
+
   if (numericScore < 0 || numericScore > 100) {
     return { isValid: false, error: 'Judge score must be between 0 and 100' };
   }
@@ -72,6 +76,36 @@ const validateTeamInput = (teamName, password) => {
 
   if (!password || typeof password !== 'string' || password.length < 4) {
     return { isValid: false, error: 'Password must be at least 4 characters long' };
+  }
+
+  return { isValid: true };
+};
+
+/**
+ * Validates a password change payload
+ * @param {string} currentPassword
+ * @param {string} newPassword
+ * @returns {{ isValid: boolean, error?: string }}
+ */
+const validatePasswordChange = (currentPassword, newPassword) => {
+  if (!currentPassword || typeof currentPassword !== 'string') {
+    return { isValid: false, error: 'Current password is required' };
+  }
+
+  if (!newPassword || typeof newPassword !== 'string') {
+    return { isValid: false, error: 'New password is required' };
+  }
+
+  if (newPassword.length < 6) {
+    return { isValid: false, error: 'New password must be at least 6 characters long' };
+  }
+
+  if (newPassword.length > 72) {
+    return { isValid: false, error: 'New password cannot exceed 72 characters' };
+  }
+
+  if (newPassword === currentPassword) {
+    return { isValid: false, error: 'New password must be different from the current one' };
   }
 
   return { isValid: true };
@@ -159,6 +193,7 @@ module.exports = {
   validateBid,
   validateScore,
   validateTeamInput,
+  validatePasswordChange,
   validatePromptInput,
   validateGameConfig
 };
