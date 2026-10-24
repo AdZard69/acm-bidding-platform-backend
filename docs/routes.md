@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:5000/api`
 
+Interactive Swagger docs: **http://localhost:5000/api/docs** (spec at `/api/docs.json`, source: `docs/openapi.json`)
+
 All responses follow the shape `{ "success": true/false, ... }`. Errors return:
 
 ```json
@@ -13,6 +15,9 @@ Authenticated requests need a JWT returned by login:
 ```
 Authorization: Bearer <token>
 ```
+
+The `Authorization: Bearer <token>` header is also set on the login **response**, so
+clients may grab the token from the header or body (the header is CORS-exposed).
 
 ---
 
@@ -146,6 +151,55 @@ Param `:id` — team id in the URL path. Flips `isActive` on/off. Deactivated te
 ```
 
 Errors: `404` unknown id.
+
+---
+
+## Prompts (admin only)
+
+### GET /api/admin/prompts
+
+No params. Lists all prompts sorted by `displayOrder`.
+
+```json
+{
+  "success": true,
+  "prompts": [
+    { "id": 1, "title": "Prompt A", "description": "...", "displayOrder": 1, "createdAt": "..." }
+  ]
+}
+```
+
+### POST /api/admin/prompts
+
+Params (JSON body): `title` (required, ≤ 100 chars), `description` (required), `displayOrder` (optional, positive integer).
+
+If `displayOrder` is omitted it auto-assigns `max + 1`, so prompts appear in creation order.
+
+```json
+{ "success": true, "prompt": { "id": 2, "title": "Prompt B", "description": "...", "displayOrder": 2, "createdAt": "..." } }
+```
+
+Errors: `400` validation.
+
+### PUT /api/admin/prompts/:id
+
+Param `:id` — prompt id in the URL path. Params (JSON body), all optional but at least one required: `title` (≤ 100 chars), `description`, `displayOrder` (positive integer).
+
+```json
+{ "success": true, "prompt": { "id": 1, "title": "Prompt A2", "description": "...", "displayOrder": 5, "createdAt": "..." } }
+```
+
+Errors: `400` nothing to update / validation / invalid id, `404` unknown id.
+
+### DELETE /api/admin/prompts/:id
+
+Param `:id` — prompt id in the URL path. Removes the prompt and its bids and assignments.
+
+```json
+{ "success": true, "message": "Prompt removed" }
+```
+
+Errors: `400` invalid id, `404` unknown id.
 
 ---
 

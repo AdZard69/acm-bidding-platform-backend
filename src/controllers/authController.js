@@ -3,7 +3,7 @@ const ApiError = require('../utils/apiError');
 const { validatePasswordChange, validateTeamInput } = require('../utils/validators');
 
 const requireFields = (body, message) => {
-  const missing = body.find((field) => field === undefined || field === null || field === '');
+  const missing = body.some((field) => field === undefined || field === null || field === '');
   if (missing) {
     throw new ApiError(400, message);
   }

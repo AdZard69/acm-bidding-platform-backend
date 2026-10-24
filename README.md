@@ -161,6 +161,9 @@ key constraints worth knowing:
 
 ## api routes
 
+Interactive Swagger docs live at `/api/docs` (spec: `/api/docs.json`, source file `docs/openapi.json`).
+The spec covers the routes implemented so far — auth, admin · teams, admin · prompts.
+
 ### auth
 
 ```

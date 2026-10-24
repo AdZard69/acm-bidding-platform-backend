@@ -13,4 +13,10 @@ router.put('/teams/:id', adminController.updateTeam);
 router.delete('/teams/:id', adminController.deleteTeam);
 router.patch('/teams/:id/toggle', adminController.toggleTeam);
 
+// prompts
+router.get('/prompts', adminController.listPrompts);
+router.post('/prompts', adminController.createPrompt);
+router.put('/prompts/:id', adminController.updatePrompt);
+router.delete('/prompts/:id', adminController.deletePrompt);
+
 module.exports = router;

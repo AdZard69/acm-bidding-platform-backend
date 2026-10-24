@@ -1,8 +1,12 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/apiError');
 const { hashPassword } = require('../utils/password');
+const { validatePromptInput } = require('../utils/validators');
 
 const getTeamOrThrow = async (id) => {
+  if (!Number.isInteger(id)) {
+    throw new ApiError(400, 'Invalid team id');
+  }
   const team = await prisma.team.findUnique({ where: { id: id } });
 
   if (!team) {
@@ -166,10 +170,122 @@ const toggleTeam = async (req, res, next) => {
   }
 };
 
+const getPromptOrThrow = async (id) => {
+  if (!Number.isInteger(id)) {
+    throw new ApiError(400, 'Invalid prompt id');
+  }
+  const prompt = await prisma.prompt.findUnique({ where: { id } });
+
+  if (!prompt) {
+    throw new ApiError(404, 'Prompt not found');
+  }
+
+  return prompt;
+};
+
+const listPrompts = async (req, res, next) => {
+  try {
+    const prompts = await prisma.prompt.findMany({
+      orderBy: { displayOrder: 'asc' }
+    });
+
+    res.status(200).json({ success: true, prompts });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const createPrompt = async (req, res, next) => {
+  try {
+    const { title, description, displayOrder } = req.body || {};
+
+    const validation = validatePromptInput(title, description, displayOrder);
+    if (!validation.isValid) {
+      throw new ApiError(400, validation.error);
+    }
+
+    let orderedDisplay;
+    if (displayOrder !== undefined) {
+      orderedDisplay = Number(displayOrder);
+    } else {
+      const max = await prisma.prompt.aggregate({ _max: { displayOrder: true } });
+      orderedDisplay = (max._max.displayOrder ?? 0) + 1;
+    }
+
+    const prompt = await prisma.prompt.create({
+      data: {
+        title: title.trim(),
+        description: description.trim(),
+        displayOrder: orderedDisplay
+      }
+    });
+
+    res.status(201).json({ success: true, prompt });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updatePrompt = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    await getPromptOrThrow(id);
+
+    const { title, description, displayOrder } = req.body || {};
+
+    if (!title && !description && displayOrder === undefined) {
+      throw new ApiError(400, 'Nothing to update: provide title, description, or displayOrder');
+    }
+
+    const validation = validatePromptInput(
+      title ?? 'valid title',
+      description ?? 'valid description',
+      displayOrder
+    );
+    if (!validation.isValid) {
+      throw new ApiError(400, validation.error);
+    }
+
+    const prompt = await prisma.prompt.update({
+      where: { id },
+      data: {
+        ...(title !== undefined ? { title: title.trim() } : {}),
+        ...(description !== undefined ? { description: description.trim() } : {}),
+        ...(displayOrder !== undefined ? { displayOrder: Number(displayOrder) } : {})
+      }
+    });
+
+    res.status(200).json({ success: true, prompt });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const deletePrompt = async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    await getPromptOrThrow(id);
+
+    await prisma.$transaction([
+      prisma.bid.deleteMany({ where: { promptId: id } }),
+      prisma.assignment.deleteMany({ where: { promptId: id } }),
+      prisma.prompt.delete({ where: { id } })
+    ]);
+
+    res.status(200).json({ success: true, message: 'Prompt removed' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   listTeams,
   createTeam,
   updateTeam,
   deleteTeam,
-  toggleTeam
+  toggleTeam,
+  listPrompts,
+  createPrompt,
+  updatePrompt,
+  deletePrompt
 };
