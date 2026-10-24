@@ -4,6 +4,7 @@ const { ROLES } = require('../utils/token');
 const logger = require('../utils/logger');
 const env = require('../config/env');
 const registerAdminHandlers = require('./adminHandler');
+const registerBidHandlers = require('./bidHandler');
 
 let ioInstance = null;
 
@@ -32,6 +33,7 @@ const initSocket = (server) => {
     } else if (socket.user?.role === ROLES.TEAM) {
       socket.join(`team:${socket.user.teamId}`);
       socket.join('teams');
+      registerBidHandlers(ioInstance, socket);
     }
 
     socket.on('disconnect', () => {
