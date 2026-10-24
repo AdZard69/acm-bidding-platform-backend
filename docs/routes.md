@@ -203,6 +203,322 @@ Errors: `400` invalid id, `404` unknown id.
 
 ---
 
+## Round Controls (admin only)
+
+### POST /api/admin/round/start
+
+Starts round 1 or round 2. Reveals the first prompt and starts the countdown timer.
+
+Params (JSON body, optional):
+- `round` or `roundNumber` (optional, integer: `1` or `2`). If omitted, defaults to round 1 (or round 2 if round 1 has completed).
+
+```json
+{
+  "success": true,
+  "message": "Round 1 started",
+  "round": 1,
+  "currentPrompt": {
+    "id": 1,
+    "title": "Reverse a Linked List",
+    "description": "Solve in O(N)",
+    "displayOrder": 1
+  },
+  "secondsRemaining": 60,
+  "status": "bidding"
+}
+```
+
+Errors:
+- `400` Round already in progress
+- `400` No prompts found (add prompts first)
+- `400` No active teams found (add teams first)
+- `400` Invalid round number (must be 1 or 2)
+- `400` Round 1 must be completed before starting Round 2
+- `400` All teams already assigned (Round 2 not needed)
+- `400` No prompts have open slots remaining for Round 2
+
+### POST /api/admin/round/pause
+
+Freezes the current bidding timer and sets game status to `paused`.
+
+No body params.
+
+```json
+{
+  "success": true,
+  "message": "Round paused",
+  "round": 1,
+  "secondsRemaining": 42,
+  "status": "paused"
+}
+```
+
+Errors:
+- `400` Round is not actively bidding
+- `400` Round is already paused
+
+### POST /api/admin/round/resume
+
+Resumes the frozen timer and restores game status to `bidding`.
+
+No body params.
+
+```json
+{
+  "success": true,
+  "message": "Round resumed",
+  "round": 1,
+  "secondsRemaining": 42,
+  "status": "bidding"
+}
+```
+
+Errors:
+- `400` Cannot resume: round is not paused
+
+### POST /api/admin/round/extend
+
+Adds extra seconds to the current countdown timer. Works while actively bidding or paused.
+
+Params (JSON body):
+- `extraSeconds` or `seconds` (required, positive integer): number of seconds to add.
+
+```json
+{
+  "success": true,
+  "message": "Timer extended by 30 seconds",
+  "extraSeconds": 30,
+  "secondsRemaining": 72
+}
+```
+
+Errors:
+- `400` `extraSeconds` must be a positive integer
+- `400` Cannot extend timer: no prompt is currently active
+
+### POST /api/admin/round/next-prompt
+
+Force skips bidding on the current prompt: evaluates all placed bids, assigns winning teams their prompt with calculated multipliers, and advances to the next eligible prompt (or ends the round if this was the last prompt).
+
+No body params.
+
+Advancing response:
+```json
+{
+  "success": true,
+  "message": "Advanced to next prompt",
+  "round": 1,
+  "prompt": {
+    "id": 2,
+    "title": "Two Sum Variation",
+    "description": "Find pairs in O(N)",
+    "displayOrder": 2
+  },
+  "promptIndex": 1,
+  "totalPrompts": 4,
+  "winners": [
+    {
+      "teamId": 1,
+      "teamName": "Alpha",
+      "bidMinutes": 45,
+      "multiplier": 1.868
+    }
+  ]
+}
+```
+
+Round ended response (if last prompt or all teams assigned):
+```json
+{
+  "success": true,
+  "message": "Round ended - no more prompts",
+  "round": 1,
+  "status": "round_ended",
+  "winners": [],
+  "summary": {
+    "round": 1,
+    "assignedTeams": 8,
+    "unassignedTeams": 2
+  }
+}
+```
+
+Errors:
+- `400` Cannot advance prompt: no round in progress
+
+### POST /api/admin/round/end
+
+Force ends the current active or paused round immediately. Evaluates any bids placed on the current prompt, stops timer, updates status to `round_ended`, and provides a summary.
+
+No body params.
+
+```json
+{
+  "success": true,
+  "message": "Round 1 ended",
+  "round": 1,
+  "status": "round_ended",
+  "winners": [],
+  "summary": {
+    "round": 1,
+    "assignedTeams": 8,
+    "unassignedTeams": 2
+  }
+}
+```
+
+Errors:
+- `400` No round is currently in progress
+
+---
+
+## Scores & Leaderboard (admin only)
+
+### POST /api/admin/scores/:teamId
+
+Submits or overrides a judge score for an assigned team. Automatically calculates final score using the team's prompt multiplier (`finalScore = judgeScore * multiplier`).
+
+Param `:teamId` — team id in URL path (positive integer).
+
+Params (JSON body):
+- `judgeScore` (required, integer between `0` and `100`).
+
+```json
+{
+  "success": true,
+  "message": "Score submitted successfully",
+  "score": {
+    "id": 1,
+    "teamId": 2,
+    "teamName": "Beta",
+    "judgeScore": 85,
+    "multiplier": 1.792,
+    "finalScore": 152.32,
+    "scoredAt": "2026-10-24T15:00:00.000Z"
+  }
+}
+```
+
+Errors:
+- `400` Invalid team id / missing or invalid judge score
+- `400` Team has not been assigned a prompt yet
+- `404` Team not found
+
+### GET /api/admin/leaderboard
+
+Returns the full leaderboard sorted by final score descending (scored teams first), with judge scores, multipliers, and assigned prompts.
+
+No params.
+
+```json
+{
+  "success": true,
+  "leaderboard": [
+    {
+      "rank": 1,
+      "teamId": 2,
+      "teamName": "Beta",
+      "isActive": true,
+      "prompt": {
+        "id": 1,
+        "title": "Reverse a Linked List",
+        "displayOrder": 1
+      },
+      "bidMinutes": 50,
+      "multiplier": 1.792,
+      "judgeScore": 85,
+      "finalScore": 152.32,
+      "scoredAt": "2026-10-24T15:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+## Game Reset (admin only)
+
+### POST /api/admin/reset
+
+Nuclear option: resets game state back to `waiting`. Wipes all placed bids, awarded assignments, and judge scores. Stops any active timer.
+
+Optional body params:
+- `wipeTeams` (boolean): also delete all teams
+- `wipePrompts` (boolean): also delete all prompts
+- `wipeAll` (boolean): delete both teams and prompts
+
+```json
+{
+  "success": true,
+  "message": "Game reset successfully",
+  "status": "waiting"
+}
+```
+
+---
+
+## Game Configuration (admin only)
+
+### GET /api/admin/config
+
+Returns current game settings.
+
+No params.
+
+```json
+{
+  "success": true,
+  "config": {
+    "id": 1,
+    "baseTime": 120,
+    "minBid": 30,
+    "maxTeams": 10,
+    "slotsPerPrompt": 3,
+    "bidDurationSeconds": 60,
+    "currentRound": 0,
+    "currentPromptIndex": -1,
+    "status": "waiting",
+    "updatedAt": "2026-10-24T15:00:00.000Z"
+  }
+}
+```
+
+### PUT /api/admin/config
+
+Updates game configuration settings. Only allowed when no round is in progress (`waiting` or `round_ended`).
+
+Params (JSON body, at least one required):
+- `baseTime` (optional, positive integer): maximum bid and starting reference time in minutes
+- `minBid` (optional, positive integer): minimum allowable bid in minutes (must not exceed `baseTime`)
+- `maxTeams` (optional, integer between `1` and `50`): maximum team capacity
+- `slotsPerPrompt` (optional, integer `>= 1`): winners allowed per prompt
+- `bidDurationSeconds` (optional, integer `>= 10`): bidding countdown duration per prompt
+
+```json
+{
+  "success": true,
+  "message": "Game configuration updated successfully",
+  "config": {
+    "id": 1,
+    "baseTime": 100,
+    "minBid": 25,
+    "maxTeams": 12,
+    "slotsPerPrompt": 4,
+    "bidDurationSeconds": 45,
+    "currentRound": 0,
+    "currentPromptIndex": -1,
+    "status": "waiting",
+    "updatedAt": "2026-10-24T15:30:00.000Z"
+  }
+}
+```
+
+Errors:
+- `400` Nothing to update / validation error / `minBid` exceeds `baseTime`
+- `400` Cannot update game settings while a round is in progress
+
+---
+
 ## Unauthenticated responses
 
 Any protected endpoint without a valid token returns:

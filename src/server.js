@@ -11,6 +11,8 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 const { ensureAdminAccount } = require('./services/authService');
 const logger = require('./utils/logger');
 const { execFile } = require('child_process');
+const http = require('http');
+const { initSocket } = require('./socket');
 
 const app = express();
 
@@ -64,7 +66,9 @@ const startServer = async (port = env.PORT) => {
   await ensureAdminAccount();
 
   return new Promise((resolve) => {
-    const server = app.listen(port, () => {
+    const server = http.createServer(app);
+    initSocket(server);
+    server.listen(port, () => {
       logger.info(`Bid and Code API listening on port ${port} (${env.NODE_ENV})`);
       resolve(server);
     });

@@ -19,4 +19,23 @@ router.post('/prompts', adminController.createPrompt);
 router.put('/prompts/:id', adminController.updatePrompt);
 router.delete('/prompts/:id', adminController.deletePrompt);
 
+// round controls
+router.post('/round/start', adminController.startRound);
+router.post('/round/pause', adminController.pauseRound);
+router.post('/round/resume', adminController.resumeRound);
+router.post('/round/extend', adminController.extendRound);
+router.post('/round/next-prompt', adminController.nextPrompt);
+router.post('/round/end', adminController.endRound);
+
+// scores & leaderboard
+router.post('/scores/:teamId', adminController.submitScore);
+router.get('/leaderboard', adminController.getLeaderboard);
+
+// reset
+router.post('/reset', adminController.resetGame);
+
+// game config
+router.get('/config', adminController.getConfig);
+router.put('/config', adminController.updateConfig);
+
 module.exports = router;

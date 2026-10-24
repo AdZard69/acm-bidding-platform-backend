@@ -47,6 +47,10 @@ const validateScore = (score) => {
     return { isValid: false, error: 'Judge score must be a valid number' };
   }
 
+  if (!Number.isInteger(numericScore)) {
+    return { isValid: false, error: 'Judge score must be a whole number' };
+  }
+
   if (numericScore < 0 || numericScore > 100) {
     return { isValid: false, error: 'Judge score must be between 0 and 100' };
   }

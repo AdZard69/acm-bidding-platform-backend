@@ -1,7 +1,13 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/apiError');
 const { hashPassword } = require('../utils/password');
-const { validatePromptInput } = require('../utils/validators');
+const { validatePromptInput, validateGameConfig } = require('../utils/validators');
+const gameService = require('../services/gameService');
+const scoreController = require('./scoreController');
+const timerManager = require('../socket/timerManager');
+const GAME_STATUS = require('../constants/gameStatus');
+const SOCKET_EVENTS = require('../constants/socketEvents');
+const { broadcast } = require('../socket');
 
 const getTeamOrThrow = async (id) => {
   if (!Number.isInteger(id)) {
@@ -278,6 +284,197 @@ const deletePrompt = async (req, res, next) => {
   }
 };
 
+const startRound = async (req, res, next) => {
+  try {
+    const { round, roundNumber } = req.body || {};
+    const targetRound = round !== undefined ? round : roundNumber;
+    const result = await gameService.startRound(targetRound, req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const pauseRound = async (req, res, next) => {
+  try {
+    const result = await gameService.pauseRound(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resumeRound = async (req, res, next) => {
+  try {
+    const result = await gameService.resumeRound(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const extendRound = async (req, res, next) => {
+  try {
+    const { extraSeconds, seconds } = req.body || {};
+    const extra = extraSeconds !== undefined ? extraSeconds : seconds;
+    const result = await gameService.extendRound(extra, req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const nextPrompt = async (req, res, next) => {
+  try {
+    const result = await gameService.nextPrompt(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const endRound = async (req, res, next) => {
+  try {
+    const result = await gameService.endRound(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resetGame = async (req, res, next) => {
+  try {
+    const { wipeTeams, wipePrompts, wipeAll } = req.body || {};
+
+    timerManager.resetTimer();
+
+    await prisma.$transaction([
+      prisma.bid.deleteMany(),
+      prisma.assignment.deleteMany(),
+      prisma.score.deleteMany()
+    ]);
+
+    if (wipeTeams || wipeAll) {
+      await prisma.team.deleteMany();
+    }
+
+    if (wipePrompts || wipeAll) {
+      await prisma.prompt.deleteMany();
+    }
+
+    await prisma.gameConfig.updateMany({
+      data: {
+        currentRound: 0,
+        currentPromptIndex: -1,
+        status: GAME_STATUS.WAITING
+      }
+    });
+
+    await prisma.adminLog.create({
+      data: {
+        adminId: req.auth?.adminId || null,
+        action: 'RESET',
+        details: `Game state reset to initial waiting state${wipeAll ? ' (all teams and prompts wiped)' : ''}`
+      }
+    });
+
+    broadcast(SOCKET_EVENTS.SERVER.GAME_STATUS, {
+      status: GAME_STATUS.WAITING,
+      currentRound: 0,
+      currentPrompt: null
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Game reset successfully',
+      status: GAME_STATUS.WAITING
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getConfig = async (req, res, next) => {
+  try {
+    const config = await gameService.getOrCreateGameConfig();
+    res.status(200).json({ success: true, config });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateConfig = async (req, res, next) => {
+  try {
+    const { baseTime, minBid, maxTeams, slotsPerPrompt, bidDurationSeconds } = req.body || {};
+
+    if (
+      baseTime === undefined &&
+      minBid === undefined &&
+      maxTeams === undefined &&
+      slotsPerPrompt === undefined &&
+      bidDurationSeconds === undefined
+    ) {
+      throw new ApiError(400, 'Nothing to update: provide at least one configuration field');
+    }
+
+    const currentConfig = await gameService.getOrCreateGameConfig();
+
+    if (
+      currentConfig.status === GAME_STATUS.BIDDING ||
+      currentConfig.status === GAME_STATUS.PAUSED
+    ) {
+      throw new ApiError(400, 'Cannot update game settings while a round is in progress');
+    }
+
+    const validation = validateGameConfig({
+      baseTime,
+      minBid,
+      maxTeams,
+      slotsPerPrompt,
+      bidDurationSeconds
+    });
+
+    if (!validation.isValid) {
+      throw new ApiError(400, validation.error);
+    }
+
+    const data = {};
+    if (baseTime !== undefined) data.baseTime = Number(baseTime);
+    if (minBid !== undefined) data.minBid = Number(minBid);
+    if (maxTeams !== undefined) data.maxTeams = Number(maxTeams);
+    if (slotsPerPrompt !== undefined) data.slotsPerPrompt = Number(slotsPerPrompt);
+    if (bidDurationSeconds !== undefined) data.bidDurationSeconds = Number(bidDurationSeconds);
+
+    const targetBaseTime = data.baseTime !== undefined ? data.baseTime : currentConfig.baseTime;
+    const targetMinBid = data.minBid !== undefined ? data.minBid : currentConfig.minBid;
+
+    if (targetMinBid > targetBaseTime) {
+      throw new ApiError(400, 'minBid cannot be greater than baseTime');
+    }
+
+    const updated = await prisma.gameConfig.update({
+      where: { id: currentConfig.id },
+      data
+    });
+
+    await prisma.adminLog.create({
+      data: {
+        adminId: req.auth?.adminId || null,
+        action: 'CONFIG_UPDATE',
+        details: `Updated game config: ${JSON.stringify(data)}`
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Game configuration updated successfully',
+      config: updated
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   listTeams,
   createTeam,
@@ -287,5 +484,16 @@ module.exports = {
   listPrompts,
   createPrompt,
   updatePrompt,
-  deletePrompt
+  deletePrompt,
+  startRound,
+  pauseRound,
+  resumeRound,
+  extendRound,
+  nextPrompt,
+  endRound,
+  submitScore: scoreController.submitScore,
+  getLeaderboard: scoreController.getLeaderboard,
+  resetGame,
+  getConfig,
+  updateConfig
 };

@@ -123,16 +123,26 @@ const ensureAdminAccount = async () => {
   }
 
   const hashedPassword = await hashPassword(password);
-  const admin = await prisma.admin.create({
-    data: {
-      username,
-      password: hashedPassword,
-      role: 'admin'
-    }
-  });
+  try {
+    const admin = await prisma.admin.create({
+      data: {
+        username,
+        password: hashedPassword,
+        role: 'admin'
+      }
+    });
 
-  logger.info(`Admin account "${username}" created from environment`);
-  return { id: admin.id, username: admin.username, created: true };
+    logger.info(`Admin account "${username}" created from environment`);
+    return { id: admin.id, username: admin.username, created: true };
+  } catch (error) {
+    if (error.code === 'P2002') {
+      const fallback = await prisma.admin.findUnique({ where: { username } });
+      if (fallback) {
+        return { id: fallback.id, username: fallback.username, created: false };
+      }
+    }
+    throw error;
+  }
 };
 
 const changePassword = async (model, id, currentPassword, newPassword) => {
