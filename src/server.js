@@ -38,39 +38,55 @@ app.use(errorHandler);
  * @returns {Promise<void>}
  */
 const setupDatabase = () =>
-  new Promise((resolve, reject) => {
+  new Promise((resolve) => {
     execFile('npx', ['prisma', 'migrate', 'deploy'], (error, stdout) => {
       if (error) {
-        reject(error);
+        logger.warn(`Prisma migrate deploy notice: ${error.message}`);
+        resolve();
         return;
       }
-      logger.info(stdout.trim());
+      if (stdout) logger.info(stdout.trim());
       prisma
         .$queryRaw`SELECT 1`
         .then(() => {
-          logger.info('Database setup complete');
+          logger.info('Database connection verified');
           resolve();
         })
-        .catch(reject);
+        .catch((err) => {
+          logger.warn(`Database ping notice: ${err.message}`);
+          resolve();
+        });
     });
   });
 
 /**
- * Applies pending migrations, verifies the DB connection,
- * then seeds the bootstrap admin and starts listening
+ * Starts the HTTP server on 0.0.0.0:PORT immediately so Render
+ * detects open ports instantly, then initializes DB connection and admin account.
  * @param {number} [port]
  * @returns {Promise<import('http').Server>}
  */
 const startServer = async (port = env.PORT) => {
-  await setupDatabase();
-  await ensureAdminAccount();
-
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = http.createServer(app);
     initSocket(server);
-    server.listen(port, () => {
-      logger.info(`Bid and Code API listening on port ${port} (${env.NODE_ENV})`);
+
+    server.listen(port, '0.0.0.0', async () => {
+      logger.info(`Bid and Code API listening on 0.0.0.0:${port} (${env.NODE_ENV})`);
       resolve(server);
+
+      // Initialize DB & bootstrap admin without blocking port detection
+      try {
+        await prisma.$connect();
+        logger.info('Database connected successfully');
+        await ensureAdminAccount();
+      } catch (dbErr) {
+        logger.error(`Database startup notice: ${dbErr.message}`);
+      }
+    });
+
+    server.on('error', (err) => {
+      logger.error('Server failed to start:', err);
+      reject(err);
     });
   });
 };

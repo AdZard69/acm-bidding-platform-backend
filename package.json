@@ -5,6 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "build": "prisma generate",
     "dev": "nodemon src/server.js",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
     "pretest": "npm run prisma:migrate:test",
