@@ -16,7 +16,28 @@ const { initSocket } = require('./socket');
 
 const app = express();
 
-app.use(corsMiddleware({ origin: env.CORS_ORIGIN, exposedHeaders: ['Authorization'] }));
+app.use(corsMiddleware({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, server-to-server) or from any Vercel / localhost origin
+    if (!origin) return callback(null, true);
+
+    const cleanOrigin = origin.replace(/\/$/, '');
+    const cleanConfigured = (env.CORS_ORIGIN || '*').replace(/\/$/, '');
+
+    if (
+      cleanConfigured === '*' ||
+      cleanOrigin === cleanConfigured ||
+      cleanOrigin.endsWith('.vercel.app') ||
+      cleanOrigin.includes('localhost') ||
+      cleanOrigin.includes('127.0.0.1')
+    ) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  exposedHeaders: ['Authorization']
+}));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 

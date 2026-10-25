@@ -16,9 +16,12 @@ let ioInstance = null;
 const initSocket = (server) => {
   ioInstance = new Server(server, {
     cors: {
-      origin: env.CORS_ORIGIN || '*',
+      origin: (origin, callback) => {
+        callback(null, true);
+      },
       methods: ['GET', 'POST'],
-      exposedHeaders: ['Authorization']
+      exposedHeaders: ['Authorization'],
+      credentials: true
     }
   });
 
