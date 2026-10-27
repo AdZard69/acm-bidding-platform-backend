@@ -30,7 +30,8 @@ const listTeams = async (req, res, next) => {
         id: true,
         teamName: true,
         isActive: true,
-        createdAt: true
+        createdAt: true,
+        assignment:true
       }
     });
 

@@ -3,10 +3,9 @@ const { authSocket } = require('../middleware/authSocket');
 const { ROLES } = require('../utils/token');
 const logger = require('../utils/logger');
 const env = require('../config/env');
+const { setIO, getIO, broadcast, sendToTeam } = require('./emitter');
 const registerAdminHandlers = require('./adminHandler');
 const registerBidHandlers = require('./bidHandler');
-
-let ioInstance = null;
 
 /**
  * Initializes Socket.IO with the HTTP server
@@ -14,7 +13,7 @@ let ioInstance = null;
  * @returns {import('socket.io').Server}
  */
 const initSocket = (server) => {
-  ioInstance = new Server(server, {
+  const ioInstance = new Server(server, {
     cors: {
       origin: (origin, callback) => {
         callback(null, true);
@@ -24,6 +23,8 @@ const initSocket = (server) => {
       credentials: true
     }
   });
+
+  setIO(ioInstance);
 
   ioInstance.use(authSocket);
 
@@ -47,38 +48,10 @@ const initSocket = (server) => {
   return ioInstance;
 };
 
-/**
- * Returns the current Socket.IO instance or null
- * @returns {import('socket.io').Server|null}
- */
-const getIO = () => ioInstance;
-
-/**
- * Helper to broadcast an event to everyone
- * @param {string} event
- * @param {any} data
- */
-const broadcast = (event, data) => {
-  if (ioInstance) {
-    ioInstance.emit(event, data);
-  }
-};
-
-/**
- * Helper to emit an event to a specific team room
- * @param {number} teamId
- * @param {string} event
- * @param {any} data
- */
-const sendToTeam = (teamId, event, data) => {
-  if (ioInstance) {
-    ioInstance.to(`team:${teamId}`).emit(event, data);
-  }
-};
-
 module.exports = {
   initSocket,
   getIO,
   broadcast,
-  sendToTeam
+  sendToTeam,
+  setIO
 };

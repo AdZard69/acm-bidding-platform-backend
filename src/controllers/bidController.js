@@ -65,7 +65,7 @@ const getCurrentBiddingState = async (req, res, next) => {
  */
 const placeBid = async (req, res, next) => {
   try {
-    const teamId = req.user?.teamId;
+    const teamId = req.auth?.teamId;
     if (!teamId) {
       throw new ApiError(401, 'Team identity missing');
     }
@@ -171,7 +171,7 @@ const updateBid = async (req, res, next) => {
  */
 const getMyBids = async (req, res, next) => {
   try {
-    const teamId = req.user?.teamId;
+    const teamId = req.auth?.teamId;
     const bids = await prisma.bid.findMany({
       where: { teamId },
       include: { prompt: true },
@@ -188,8 +188,8 @@ const getMyBids = async (req, res, next) => {
  */
 const getMyAssignment = async (req, res, next) => {
   try {
-    const teamId = req.user?.teamId;
-    const assignment = await prisma.assignment.findUnique({
+    const teamId = req.auth?.teamId;
+    const assignment = await prisma.Assignment.findUnique({
       where: { teamId },
       include: { prompt: true }
     });

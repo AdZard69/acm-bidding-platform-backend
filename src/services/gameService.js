@@ -5,7 +5,7 @@ const ApiError = require('../utils/apiError');
 const logger = require('../utils/logger');
 const timerManager = require('../socket/timerManager');
 const bidEngine = require('./bidEngine');
-const { broadcast, sendToTeam } = require('../socket');
+const { broadcast, sendToTeam } = require('../socket/emitter');
 
 /**
  * Retrieves the singleton game config row or creates it with defaults.
