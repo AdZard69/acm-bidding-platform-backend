@@ -11,7 +11,9 @@ router.get('/leaderboard', bidController.getLeaderboard);
 // Team-only endpoints
 router.use(requireTeam);
 router.post('/place', bidController.placeBid);
+router.post('/', bidController.placeBid);
 router.put('/update', bidController.updateBid);
+router.put('/', bidController.updateBid);
 router.get('/my-bids', bidController.getMyBids);
 router.get('/assignment', bidController.getMyAssignment);
 

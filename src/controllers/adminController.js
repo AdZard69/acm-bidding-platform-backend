@@ -1,16 +1,18 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/apiError');
 const { hashPassword } = require('../utils/password');
-const { validatePromptInput, validateGameConfig } = require('../utils/validators');
+const { validatePromptInput, validateGameConfig, validateTeamInput, isIntegerInput } = require('../utils/validators');
 const gameService = require('../services/gameService');
 const scoreController = require('./scoreController');
 const timerManager = require('../socket/timerManager');
 const GAME_STATUS = require('../constants/gameStatus');
 const SOCKET_EVENTS = require('../constants/socketEvents');
-const { broadcast } = require('../socket');
+const { broadcast } = require('../socket/emitter');
+const { withGameLock } = require('../services/gameLock');
+const { getRoundDefinitions, promptRound } = require('../services/roundService');
 
 const getTeamOrThrow = async (id) => {
-  if (!Number.isInteger(id)) {
+  if (!isIntegerInput(id) || id <= 0) {
     throw new ApiError(400, 'Invalid team id');
   }
   const team = await prisma.team.findUnique({ where: { id: id } });
@@ -31,27 +33,46 @@ const listTeams = async (req, res, next) => {
         teamName: true,
         isActive: true,
         createdAt: true,
-        assignment:true
+        assignment: { include: { prompt: true } },
+        score: true
       }
     });
 
-    res.status(200).json({ success: true, teams });
+    const rounds = await getRoundDefinitions(await gameService.getOrCreateGameConfig());
+    res.status(200).json({ success: true, teams: teams.map((team) => ({
+      ...team,
+      assignment: team.assignment ? { ...promptRound(team.assignment, rounds), multiplier: Number(team.assignment.multiplier) } : null,
+      score: team.score ? { ...team.score, multiplier: Number(team.score.multiplier), finalScore: Number(team.score.finalScore) } : null
+    })) });
   } catch (error) {
     next(error);
   }
+};
+
+const listBids = async (req, res, next) => {
+  try {
+    const rounds = await getRoundDefinitions(await gameService.getOrCreateGameConfig());
+    const requested = req.query?.round;
+    if (requested !== undefined && (!isIntegerInput(requested) || Number(requested) < 1))
+      throw new ApiError(400, 'round must be a positive integer');
+    const target = requested !== undefined ? rounds.find((round) => round.roundNumber === Number(requested)) : null;
+    const bids = requested !== undefined && !target ? [] : await prisma.bid.findMany({
+      ...(target ? { where: { promptId: target.promptId } } : {}),
+      include: { prompt: true, team: { select: { teamName: true } } },
+      orderBy: [{ submittedAt: 'asc' }, { id: 'asc' }]
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json({ success: true, rounds,
+      bids: bids.map(({ team, ...bid }) => ({ ...promptRound(bid, rounds), teamName: team.teamName })) });
+  } catch (error) { next(error); }
 };
 
 const createTeam = async (req, res, next) => {
   try {
     const { teamName, password } = req.body || {};
 
-    if (!teamName || typeof teamName !== 'string' || !teamName.trim()) {
-      throw new ApiError(400, 'Team name is required');
-    }
-
-    if (!password || typeof password !== 'string' || password.length < 4) {
-      throw new ApiError(400, 'Password must be at least 4 characters long');
-    }
+    const validation = validateTeamInput(teamName, password);
+    if (!validation.isValid) throw new ApiError(400, validation.error);
 
     const existing = await prisma.team.findUnique({
       where: { teamName: teamName.trim() }
@@ -96,21 +117,22 @@ const updateTeam = async (req, res, next) => {
     const data = {};
 
     if (teamName !== undefined) {
-      if (typeof teamName !== 'string' || !teamName.trim()) {
+      if (typeof teamName !== 'string' || teamName.trim().length < 2 || teamName.trim().length > 50) {
         throw new ApiError(400, 'Team name cannot be empty');
       }
       data.teamName = teamName.trim();
     }
 
     if (password !== undefined) {
-      if (typeof password !== 'string' || password.length < 4) {
+      if (typeof password !== 'string' || password.length < 4 || Buffer.byteLength(password, 'utf8') > 72) {
         throw new ApiError(400, 'Password must be at least 4 characters long');
       }
       data.password = await hashPassword(password);
     }
 
     if (isActive !== undefined) {
-      data.isActive = Boolean(isActive);
+      if (typeof isActive !== 'boolean') throw new ApiError(400, 'isActive must be a boolean');
+      data.isActive = isActive;
     }
 
     if (data.teamName) {
@@ -178,7 +200,7 @@ const toggleTeam = async (req, res, next) => {
 };
 
 const getPromptOrThrow = async (id) => {
-  if (!Number.isInteger(id)) {
+  if (!isIntegerInput(id) || id <= 0) {
     throw new ApiError(400, 'Invalid prompt id');
   }
   const prompt = await prisma.prompt.findUnique({ where: { id } });
@@ -193,7 +215,7 @@ const getPromptOrThrow = async (id) => {
 const listPrompts = async (req, res, next) => {
   try {
     const prompts = await prisma.prompt.findMany({
-      orderBy: { displayOrder: 'asc' }
+      orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }]
     });
 
     res.status(200).json({ success: true, prompts });
@@ -204,6 +226,12 @@ const listPrompts = async (req, res, next) => {
 
 const createPrompt = async (req, res, next) => {
   try {
+    const config = await gameService.getOrCreateGameConfig();
+    const rounds = await getRoundDefinitions(config);
+    if (config.currentRound > 0 && config.currentRound < rounds.length)
+      throw new ApiError(400, 'Reset bidding before changing the round prompt order');
+    if ([GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status))
+      throw new ApiError(400, 'Cannot change prompts while a round is in progress');
     const { title, description, displayOrder } = req.body || {};
 
     const validation = validatePromptInput(title, description, displayOrder);
@@ -235,6 +263,12 @@ const createPrompt = async (req, res, next) => {
 
 const updatePrompt = async (req, res, next) => {
   try {
+    const config = await gameService.getOrCreateGameConfig();
+    const rounds = await getRoundDefinitions(config);
+    if (config.currentRound > 0 && config.currentRound < rounds.length && req.body?.displayOrder !== undefined)
+      throw new ApiError(400, 'Reset bidding before changing the round prompt order');
+    if ([GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status))
+      throw new ApiError(400, 'Cannot change prompts while a round is in progress');
     const id = Number(req.params.id);
     await getPromptOrThrow(id);
 
@@ -245,8 +279,8 @@ const updatePrompt = async (req, res, next) => {
     }
 
     const validation = validatePromptInput(
-      title ?? 'valid title',
-      description ?? 'valid description',
+      title !== undefined ? title : 'valid title',
+      description !== undefined ? description : 'valid description',
       displayOrder
     );
     if (!validation.isValid) {
@@ -270,11 +304,18 @@ const updatePrompt = async (req, res, next) => {
 
 const deletePrompt = async (req, res, next) => {
   try {
+    const config = await gameService.getOrCreateGameConfig();
+    const rounds = await getRoundDefinitions(config);
+    if (config.currentRound > 0 && config.currentRound < rounds.length)
+      throw new ApiError(400, 'Reset bidding before changing the round prompt order');
+    if ([GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status))
+      throw new ApiError(400, 'Cannot change prompts while a round is in progress');
     const id = Number(req.params.id);
     await getPromptOrThrow(id);
 
     await prisma.$transaction([
       prisma.bid.deleteMany({ where: { promptId: id } }),
+      prisma.score.deleteMany({ where: { team: { assignment: { promptId: id } } } }),
       prisma.assignment.deleteMany({ where: { promptId: id } }),
       prisma.prompt.delete({ where: { id } })
     ]);
@@ -298,7 +339,7 @@ const startRound = async (req, res, next) => {
 
 const pauseRound = async (req, res, next) => {
   try {
-    const result = await gameService.pauseRound(req.auth?.adminId);
+    const result = await gameService.pauseRound(req.auth?.adminId, req.body?.timerId);
     res.status(200).json(result);
   } catch (error) {
     next(error);
@@ -307,7 +348,7 @@ const pauseRound = async (req, res, next) => {
 
 const resumeRound = async (req, res, next) => {
   try {
-    const result = await gameService.resumeRound(req.auth?.adminId);
+    const result = await gameService.resumeRound(req.auth?.adminId, req.body?.timerId);
     res.status(200).json(result);
   } catch (error) {
     next(error);
@@ -318,7 +359,7 @@ const extendRound = async (req, res, next) => {
   try {
     const { extraSeconds, seconds } = req.body || {};
     const extra = extraSeconds !== undefined ? extraSeconds : seconds;
-    const result = await gameService.extendRound(extra, req.auth?.adminId);
+    const result = await gameService.extendRound(extra, req.auth?.adminId, req.body?.timerId);
     res.status(200).json(result);
   } catch (error) {
     next(error);
@@ -327,7 +368,7 @@ const extendRound = async (req, res, next) => {
 
 const nextPrompt = async (req, res, next) => {
   try {
-    const result = await gameService.nextPrompt(req.auth?.adminId);
+    const result = await gameService.nextPrompt(req.auth?.adminId, req.body?.timerId);
     res.status(200).json(result);
   } catch (error) {
     next(error);
@@ -336,7 +377,7 @@ const nextPrompt = async (req, res, next) => {
 
 const endRound = async (req, res, next) => {
   try {
-    const result = await gameService.endRound(req.auth?.adminId);
+    const result = await gameService.endRound(req.auth?.adminId, req.body?.timerId);
     res.status(200).json(result);
   } catch (error) {
     next(error);
@@ -347,43 +388,28 @@ const resetGame = async (req, res, next) => {
   try {
     const { wipeTeams, wipePrompts, wipeAll } = req.body || {};
 
-    timerManager.resetTimer();
-
+    for (const [name, value] of Object.entries({ wipeTeams, wipePrompts, wipeAll })) {
+      if (value !== undefined && typeof value !== 'boolean') throw new ApiError(400, `${name} must be a boolean`);
+    }
     await prisma.$transaction([
       prisma.bid.deleteMany(),
+      prisma.score.deleteMany(),
       prisma.assignment.deleteMany(),
-      prisma.score.deleteMany()
-    ]);
-
-    if (wipeTeams || wipeAll) {
-      await prisma.team.deleteMany();
-    }
-
-    if (wipePrompts || wipeAll) {
-      await prisma.prompt.deleteMany();
-    }
-
-    await prisma.gameConfig.updateMany({
-      data: {
-        currentRound: 0,
-        currentPromptIndex: -1,
-        status: GAME_STATUS.WAITING
-      }
-    });
-
-    await prisma.adminLog.create({
-      data: {
-        adminId: req.auth?.adminId || null,
-        action: 'RESET',
+      ...((wipeTeams || wipeAll) ? [prisma.team.deleteMany()] : []),
+      ...((wipePrompts || wipeAll) ? [prisma.prompt.deleteMany()] : []),
+      prisma.gameConfig.updateMany({ data: {
+        currentRound: 0, currentPromptIndex: -1, status: GAME_STATUS.WAITING, biddingState: {}
+      } }),
+      prisma.adminLog.create({ data: {
+        adminId: req.auth?.adminId || null, action: 'RESET',
         details: `Game state reset to initial waiting state${wipeAll ? ' (all teams and prompts wiped)' : ''}`
-      }
-    });
+      } })
+    ]);
+    timerManager.resetTimer();
 
-    broadcast(SOCKET_EVENTS.SERVER.GAME_STATUS, {
-      status: GAME_STATUS.WAITING,
-      currentRound: 0,
-      currentPrompt: null
-    });
+    await gameService.publishState(await gameService.getOrCreateGameConfig());
+    broadcast('game:reset', {});
+    broadcast('leaderboard:update', {});
 
     res.status(200).json({
       success: true,
@@ -476,7 +502,8 @@ const updateConfig = async (req, res, next) => {
   }
 };
 
-module.exports = {
+const controllers = {
+  listBids,
   listTeams,
   createTeam,
   updateTeam,
@@ -498,3 +525,19 @@ module.exports = {
   getConfig,
   updateConfig
 };
+
+for (const name of ['createTeam', 'updateTeam', 'deleteTeam', 'toggleTeam',
+  'createPrompt', 'updatePrompt', 'deletePrompt', 'resetGame', 'updateConfig']) {
+  const handler = controllers[name];
+  controllers[name] = (req, res, next) => withGameLock(async () => {
+    let failed = false;
+    await handler(req, res, (error) => { failed = true; next(error); });
+    if (!failed) {
+      broadcast('config:updated', {});
+      broadcast('leaderboard:update', {});
+      // Notifications do not hold the mutation queue for more database reads.
+      broadcast('game:refresh', {});
+    }
+  }).catch(next);
+}
+module.exports = controllers;

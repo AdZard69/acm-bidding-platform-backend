@@ -2,6 +2,10 @@
  * Validation utilities for incoming requests and socket payloads
  */
 
+const isIntegerInput = (value) =>
+  (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+  Number.isSafeInteger(Number(value)) && Math.abs(Number(value)) <= 2147483647;
+
 /**
  * Validates a bid minute value
  * @param {any} bidMinutes
@@ -16,7 +20,7 @@ const validateBid = (bidMinutes, minBid = 30, baseTime = 120) => {
 
   const numericBid = Number(bidMinutes);
 
-  if (!Number.isInteger(numericBid)) {
+  if (!isIntegerInput(bidMinutes)) {
     return { isValid: false, error: 'Bid time must be a whole number of minutes' };
   }
 
@@ -47,7 +51,7 @@ const validateScore = (score) => {
     return { isValid: false, error: 'Judge score must be a valid number' };
   }
 
-  if (!Number.isInteger(numericScore)) {
+  if (!isIntegerInput(score)) {
     return { isValid: false, error: 'Judge score must be a whole number' };
   }
 
@@ -78,6 +82,7 @@ const validateTeamInput = (teamName, password) => {
     return { isValid: false, error: 'Password must be at least 4 characters long' };
   }
 
+  if (Buffer.byteLength(password, 'utf8') > 72) return { isValid: false, error: 'Password cannot exceed 72 bytes' };
   return { isValid: true };
 };
 
@@ -100,8 +105,8 @@ const validatePasswordChange = (currentPassword, newPassword) => {
     return { isValid: false, error: 'New password must be at least 6 characters long' };
   }
 
-  if (newPassword.length > 72) {
-    return { isValid: false, error: 'New password cannot exceed 72 characters' };
+  if (Buffer.byteLength(newPassword, 'utf8') > 72) {
+    return { isValid: false, error: 'New password cannot exceed 72 bytes' };
   }
 
   if (newPassword === currentPassword) {
@@ -133,7 +138,7 @@ const validatePromptInput = (title, description, displayOrder) => {
 
   if (displayOrder !== undefined) {
     const orderNum = Number(displayOrder);
-    if (!Number.isInteger(orderNum) || orderNum < 1) {
+    if (!isIntegerInput(displayOrder) || orderNum < 1) {
       return { isValid: false, error: 'Display order must be a positive integer' };
     }
   }
@@ -153,35 +158,35 @@ const validateGameConfig = (config) => {
 
   if (config.baseTime !== undefined) {
     const baseTime = Number(config.baseTime);
-    if (!Number.isInteger(baseTime) || baseTime <= 0) {
+    if (!isIntegerInput(config.baseTime) || baseTime <= 0) {
       return { isValid: false, error: 'baseTime must be a positive integer' };
     }
   }
 
   if (config.minBid !== undefined) {
     const minBid = Number(config.minBid);
-    if (!Number.isInteger(minBid) || minBid <= 0) {
+    if (!isIntegerInput(config.minBid) || minBid <= 0) {
       return { isValid: false, error: 'minBid must be a positive integer' };
     }
   }
 
   if (config.maxTeams !== undefined) {
     const maxTeams = Number(config.maxTeams);
-    if (!Number.isInteger(maxTeams) || maxTeams < 1 || maxTeams > 50) {
+    if (!isIntegerInput(config.maxTeams) || maxTeams < 1 || maxTeams > 50) {
       return { isValid: false, error: 'maxTeams must be between 1 and 50' };
     }
   }
 
   if (config.slotsPerPrompt !== undefined) {
     const slots = Number(config.slotsPerPrompt);
-    if (!Number.isInteger(slots) || slots < 1) {
+    if (!isIntegerInput(config.slotsPerPrompt) || slots < 1) {
       return { isValid: false, error: 'slotsPerPrompt must be at least 1' };
     }
   }
 
   if (config.bidDurationSeconds !== undefined) {
     const duration = Number(config.bidDurationSeconds);
-    if (!Number.isInteger(duration) || duration < 10) {
+    if (!isIntegerInput(config.bidDurationSeconds) || duration < 10) {
       return { isValid: false, error: 'bidDurationSeconds must be at least 10 seconds' };
     }
   }
@@ -190,6 +195,7 @@ const validateGameConfig = (config) => {
 };
 
 module.exports = {
+  isIntegerInput,
   validateBid,
   validateScore,
   validateTeamInput,

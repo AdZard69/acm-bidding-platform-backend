@@ -17,6 +17,7 @@ if (!/test/i.test(new URL(testDbUrl).pathname)) {
 }
 
 process.env.DATABASE_URL = testDbUrl;
+process.env.DIRECT_URL = testDbUrl;
 process.env.NODE_ENV = process.env.NODE_ENV_TEST || 'test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-key';
 process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';

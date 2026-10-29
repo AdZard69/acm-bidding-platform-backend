@@ -114,6 +114,7 @@ model GameConfig {
   currentRound       Int      @default(0) @map("current_round")
   currentPromptIndex Int      @default(-1) @map("current_prompt_index")
   status             String   @default("waiting") @db.VarChar(20)
+  biddingState       Json?    @map("bidding_state")
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("game_config")

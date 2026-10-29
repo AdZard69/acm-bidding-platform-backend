@@ -15,13 +15,15 @@ const SOCKET_EVENTS = Object.freeze({
     GAME_STATUS: 'game:status',
     ASSIGNMENT_RECEIVED: 'assignment:received',
     SCORE_RECEIVED: 'score:received',
+    TIME_SYNC: 'time:sync',
     ERROR: 'game:error'
   },
 
   // Team Client -> Server
   CLIENT: {
     BID_PLACE: 'bid:place',
-    BID_UPDATE: 'bid:update'
+    BID_UPDATE: 'bid:update',
+    TIME_SYNC: 'time:sync'
   },
 
   // Admin Client -> Server

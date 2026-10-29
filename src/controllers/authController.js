@@ -13,6 +13,8 @@ const registerTeam = async (req, res, next) => {
   try {
     const { teamName, password } = req.body || {};
     requireFields([teamName, password], 'Team name and password are required');
+    if (typeof teamName !== 'string' || !teamName.trim() || teamName.trim().length > 50 || typeof password !== 'string')
+      throw new ApiError(400, 'Team name and password must be valid strings');
 
     const validation = validateTeamInput(teamName, password);
     if (!validation.isValid) {
@@ -30,6 +32,8 @@ const registerAdmin = async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
     requireFields([username, password], 'Username and password are required');
+    if (typeof username !== 'string' || !username.trim() || username.trim().length > 50 || typeof password !== 'string')
+      throw new ApiError(400, 'Username and password must be valid strings');
 
     if (typeof password !== 'string' || password.length < 6) {
       throw new ApiError(400, 'Password must be at least 6 characters long');
@@ -46,8 +50,10 @@ const teamLogin = async (req, res, next) => {
   try {
     const { teamName, password } = req.body || {};
     requireFields([teamName, password], 'Team name and password are required');
+    if (typeof teamName !== 'string' || !teamName.trim() || teamName.trim().length > 50 || typeof password !== 'string')
+      throw new ApiError(400, 'Team name and password must be valid strings');
 
-    const result = await authService.authenticateTeam(teamName, password);
+    const result = await authService.authenticateTeam(teamName.trim(), password);
     res
       .set('Authorization', `Bearer ${result.token}`)
       .status(200)
@@ -61,8 +67,10 @@ const adminLogin = async (req, res, next) => {
   try {
     const { username, password } = req.body || {};
     requireFields([username, password], 'Username and password are required');
+    if (typeof username !== 'string' || !username.trim() || username.trim().length > 50 || typeof password !== 'string')
+      throw new ApiError(400, 'Username and password must be valid strings');
 
-    const result = await authService.authenticateAdmin(username, password);
+    const result = await authService.authenticateAdmin(username.trim(), password);
     res
       .set('Authorization', `Bearer ${result.token}`)
       .status(200)

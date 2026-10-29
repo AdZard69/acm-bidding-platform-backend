@@ -6,6 +6,7 @@ const env = require('../config/env');
 const { setIO, getIO, broadcast, sendToTeam } = require('./emitter');
 const registerAdminHandlers = require('./adminHandler');
 const registerBidHandlers = require('./bidHandler');
+const SOCKET_EVENTS = require('../constants/socketEvents');
 
 /**
  * Initializes Socket.IO with the HTTP server
@@ -19,7 +20,7 @@ const initSocket = (server) => {
         callback(null, true);
       },
       methods: ['GET', 'POST'],
-      exposedHeaders: ['Authorization'],
+      exposedHeaders: ['Authorization', 'X-Server-Time', 'X-Server-Time-ISO'],
       credentials: true
     }
   });
@@ -30,6 +31,25 @@ const initSocket = (server) => {
 
   ioInstance.on('connection', (socket) => {
     logger.info(`Socket connected: ${socket.id} (role: ${socket.user?.role})`);
+
+    const handleTimeSync = (data, ack) => {
+      const serverReceiveTime = Date.now();
+      const payload = {
+        clientTime: data?.clientTime ?? data?.t0 ?? null,
+        serverReceiveTime,
+        serverTransmitTime: Date.now(),
+        serverTime: serverReceiveTime,
+        serverTimeIso: new Date(serverReceiveTime).toISOString()
+      };
+      if (typeof ack === 'function') {
+        ack(payload);
+      } else {
+        socket.emit(SOCKET_EVENTS.SERVER.TIME_SYNC, payload);
+      }
+    };
+
+    socket.on(SOCKET_EVENTS.CLIENT.TIME_SYNC, handleTimeSync);
+    socket.on('clock:sync', handleTimeSync);
 
     if (socket.user?.role === ROLES.ADMIN) {
       socket.join('admin');

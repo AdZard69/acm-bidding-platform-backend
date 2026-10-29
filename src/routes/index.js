@@ -4,9 +4,11 @@ const authRoutes = require('./auth');
 const docsRoutes = require('./docs');
 const adminRoutes = require('./admin');
 const bidRoutes = require('./bid');
+const clockRoutes = require('./clock');
 
 const router = express.Router();
 
+router.use('/clock', clockRoutes);
 router.use('/auth', authRoutes);
 router.use('/admin', adminRoutes);
 router.use('/bid', bidRoutes);

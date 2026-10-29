@@ -3,8 +3,8 @@
  * Implements exponential multiplying factor based on time commitment:
  * Formula: multiplier = e ^ (k * (1 - bid / base_time))
  *
- * Round 1: k = 1.0  (range ~1.000 to ~2.117)
- * Round 2: k = 0.7  (range ~1.000 to ~1.690)
+ * Every prompt round uses k = 1.0 (range ~1.000 to ~2.117).
+ * Prompt order never changes the multiplier curve.
  */
 
 const DEFAULT_BASE_TIME = 120;
@@ -12,24 +12,22 @@ const DEFAULT_MIN_BID = 30;
 
 const K_FACTORS = Object.freeze({
   1: 1.0,
-  2: 0.7
+  2: 1.0
 });
 
 /**
  * Get k-factor for a given round
- * @param {number} round - 1 or 2
+ * @param {number} round - Round number
  * @returns {number}
  */
-const getKFactor = (round = 1) => {
-  return K_FACTORS[round] !== undefined ? K_FACTORS[round] : 1.0;
-};
+const getKFactor = () => 1.0;
 
 /**
  * Calculates multiplier for a given bid and round
  * @param {number} bidMinutes - Bid in minutes (e.g. 20 to 100)
- * @param {number} round - Round number (1 or 2)
- * @param {number} baseTime - Base reference time (default 100)
- * @param {number} minBid - Minimum allowed bid (default 20)
+ * @param {number} round - Prompt round number (the curve is the same for all rounds)
+ * @param {number} baseTime - Base reference time (default 120)
+ * @param {number} minBid - Minimum allowed bid (default 30)
  * @returns {number} - Multiplier rounded to 3 decimal places
  */
 const calculateMultiplier = (
