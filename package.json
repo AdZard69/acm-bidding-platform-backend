@@ -13,7 +13,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:migrate:test": "node scripts/migrate-test-db.js",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "test:unit": "node --test --test-concurrency=1 tests/unit/*.test.js",
+    "test:routes": "node --test tests/unit/routes.test.js",
+    "db:check": "node scripts/check-db.js"
   },
   "repository": {
     "type": "git",

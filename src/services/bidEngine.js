@@ -1,6 +1,8 @@
 const prisma = require('../config/prisma');
 const { calculateMultiplier } = require('./multiplierService');
 const logger = require('../utils/logger');
+const { sendToTeam } = require('../socket/emitter');
+const { getBidRound, getRoundDefinitions } = require('./roundService');
 
 /**
  * Evaluates bids for a specific prompt and round, selects winners,
@@ -21,7 +23,7 @@ const evaluatePromptBids = async (promptId, round, availableSlots, config) => {
   const eligibleBids = await prisma.bid.findMany({
     where: {
       promptId,
-      round,
+      round: getBidRound(config),
       team: {
         isActive: true,
         assignment: null
@@ -97,13 +99,14 @@ const autoAssignRemainingTeam = async (teamId, config) => {
 
   const slotsPerPrompt = config?.slotsPerPrompt || 3;
   const baseTime = config?.baseTime || 120;
-  const round = config?.currentRound || 1;
+  const rounds = await getRoundDefinitions(config);
 
   const eligiblePrompt = prompts.find((p) => p.assignments.length < slotsPerPrompt);
   if (!eligiblePrompt) {
     return null;
   }
 
+  const round = rounds.find((entry) => entry.promptId === eligiblePrompt.id)?.roundNumber || config.currentRound;
   const assignment = await prisma.assignment.create({
     data: {
       teamId: team.id,
@@ -115,6 +118,11 @@ const autoAssignRemainingTeam = async (teamId, config) => {
   });
 
   logger.info(`Auto-assigned team ${team.teamName} (id ${team.id}) to prompt ${eligiblePrompt.id} at base time`);
+
+  sendToTeam(team.id, 'assignment:received', {
+    promptId: eligiblePrompt.id, title: eligiblePrompt.title, description: eligiblePrompt.description,
+    bidMinutes: baseTime, multiplier: 1, codingTimeMinutes: baseTime, round
+  });
 
   return {
     teamId: team.id,

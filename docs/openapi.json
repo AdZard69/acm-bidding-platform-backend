@@ -8,6 +8,7 @@
   "servers": [{ "url": "http://localhost:5000/api" }],
   "tags": [
     { "name": "Health" },
+    { "name": "Clock", "description": "Server clock and NTP time synchronization (public)" },
     { "name": "Auth", "description": "Login, session identity, logout, password changes" },
     { "name": "Admin · Teams", "description": "Team management (admin JWT required)" },
     { "name": "Admin · Prompts", "description": "Prompt management (admin JWT required)" },
@@ -16,6 +17,291 @@
     { "name": "Admin · System", "description": "System maintenance and reset (admin JWT required)" }
   ],
   "paths": {
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Database and application readiness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Database is ready"
+          },
+          "503": {
+            "description": "Database unavailable, initializing, or missing migrations"
+          }
+        }
+      }
+    },
+    "/admin/bids": {
+      "get": {
+        "tags": [
+          "Admin \u00b7 Teams"
+        ],
+        "summary": "Persisted bid history across all rounds and prompts",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bids including teamName and prompt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "bids": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Bid"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "round",
+            "in": "query",
+            "required": false,
+            "description": "Return only this prompt round; legacy history is projected by prompt without rewriting stored records.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ]
+      }
+    },
+    "/bid/current": {
+      "get": {
+        "tags": [
+          "Bidding"
+        ],
+        "summary": "Current prompt, countdown, bids and configured limits",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Uncached bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bid/place": {
+      "post": {
+        "tags": [
+          "Bidding"
+        ],
+        "summary": "Place or replace a team bid",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BidInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted bid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "bid": {
+                      "$ref": "#/components/schemas/Bid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "409": {
+            "description": "Minute collision or stale session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bid/update": {
+      "put": {
+        "tags": [
+          "Bidding"
+        ],
+        "summary": "Update a team bid",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BidInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted bid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "bid": {
+                      "$ref": "#/components/schemas/Bid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bid/my-bids": {
+      "get": {
+        "tags": [
+          "Bidding"
+        ],
+        "summary": "Team bid history",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bid history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bids": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Bid"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bid/assignment": {
+      "get": {
+        "tags": [
+          "Bidding"
+        ],
+        "summary": "Team assignment and score for reload/reconnect recovery",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Assignment and score, each nullable; decimal fields are JSON numbers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "assignment": {
+                      "type": "object",
+                      "nullable": true
+                    },
+                    "score": {
+                      "type": "object",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bid/leaderboard": {
+      "get": {
+        "tags": [
+          "Bidding"
+        ],
+        "summary": "Public standings for active teams",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ranked teams",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "leaderboard": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": ["Health"],
@@ -25,6 +311,118 @@
           "200": {
             "description": "Server is up",
             "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "status": { "type": "string" }, "uptime": { "type": "number" } } } } }
+          }
+        }
+      }
+    },
+    "/clock": {
+      "get": {
+        "tags": ["Clock"],
+        "summary": "Authoritative server clock and active bidding timer state",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server clock and bidding timer snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "serverTime": { "type": "number", "description": "Current server timestamp in epoch ms" },
+                    "serverTimeIso": { "type": "string" },
+                    "uptime": { "type": "number" },
+                    "timezone": { "type": "string" },
+                    "bidding": {
+                      "type": "object",
+                      "properties": {
+                        "status": { "type": "string" },
+                        "currentRound": { "type": "integer" },
+                        "activePromptId": { "type": "integer", "nullable": true },
+                        "isRunning": { "type": "boolean" },
+                        "isPaused": { "type": "boolean" },
+                        "hasExpired": { "type": "boolean" },
+                        "startTime": { "type": "number", "nullable": true },
+                        "endsAt": { "type": "number", "nullable": true },
+                        "durationSeconds": { "type": "integer" },
+                        "remainingMs": { "type": "number" },
+                        "secondsRemaining": { "type": "integer" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/clock/sync": {
+      "get": {
+        "tags": ["Clock"],
+        "summary": "NTP / Cristian clock sync ping (GET with query param t0)",
+        "security": [],
+        "parameters": [
+          { "name": "t0", "in": "query", "schema": { "type": "number" }, "description": "Client send timestamp" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sync response echoing clientTime and server timestamps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "clientTime": { "type": "number", "nullable": true },
+                    "serverReceiveTime": { "type": "number" },
+                    "serverTransmitTime": { "type": "number" },
+                    "serverTime": { "type": "number" },
+                    "serverTimeIso": { "type": "string" },
+                    "precision": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Clock"],
+        "summary": "NTP / Cristian clock sync ping (POST with JSON body)",
+        "security": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "clientTime": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync response echoing clientTime and server timestamps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "clientTime": { "type": "number", "nullable": true },
+                    "serverReceiveTime": { "type": "number" },
+                    "serverTransmitTime": { "type": "number" },
+                    "serverTime": { "type": "number" },
+                    "serverTimeIso": { "type": "string" },
+                    "precision": { "type": "string" }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -269,93 +667,271 @@
     },
     "/admin/round/start": {
       "post": {
-        "tags": ["Admin · Rounds"],
-        "summary": "Start round 1 (or round 2)",
-        "description": "Reveals the first prompt of the round and starts countdown timer.",
-        "security": [{ "bearerAuth": [] }],
+        "tags": [
+          "Admin \u00b7 Rounds"
+        ],
+        "summary": "Start the next prompt round",
+        "description": "Round N identifies Prompt N. Starts the next sequential round; all rounds use the same multiplier curve.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": false,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundStartInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundStartInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Round started", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundStartResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/pause": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin \u00b7 Rounds"
+        ],
         "summary": "Pause current timer",
         "description": "Freezes bidding countdown and sets game status to paused.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Round paused", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundPauseResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundControlInput"
+              }
+            }
+          }
         }
       }
     },
     "/admin/round/resume": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin \u00b7 Rounds"
+        ],
         "summary": "Resume timer",
         "description": "Resumes the paused timer and restores game status to bidding.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Round resumed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundResumeResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundControlInput"
+              }
+            }
+          }
         }
       }
     },
     "/admin/round/extend": {
       "post": {
-        "tags": ["Admin · Rounds"],
+        "tags": [
+          "Admin \u00b7 Rounds"
+        ],
         "summary": "Add time to current timer",
         "description": "Adds extraSeconds to the active or paused timer.",
-        "security": [{ "bearerAuth": [] }],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundExtendInput" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundExtendInput"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Timer extended", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoundExtendResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       }
     },
     "/admin/round/next-prompt": {
       "post": {
-        "tags": ["Admin · Rounds"],
-        "summary": "Force skip to next prompt",
-        "description": "Evaluates current prompt bids, assigns winners, and advances to the next prompt or ends round.",
-        "security": [{ "bearerAuth": [] }],
+        "tags": [
+          "Admin \u00b7 Rounds"
+        ],
+        "summary": "Manually open the next prompt round",
+        "description": "Closes the current round if needed, then opens the next prompt as Round N+1. Timer expiry never advances prompts. Completed results stay visible until this action.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Advanced to next prompt or round ended", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" } } } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundControlInput"
+              }
+            }
+          }
         }
       }
     },
     "/admin/round/end": {
       "post": {
-        "tags": ["Admin · Rounds"],
-        "summary": "Force end current round",
-        "description": "Stops timer, awards any placed bids for current prompt, and ends the round.",
-        "security": [{ "bearerAuth": [] }],
+        "tags": [
+          "Admin \u00b7 Rounds"
+        ],
+        "summary": "Close the current prompt round",
+        "description": "Awards the current round and keeps its prompt, bids and results visible. Does not open another prompt.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "responses": {
-          "200": { "description": "Round ended", "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" }, "round": { "type": "integer" }, "status": { "type": "string" }, "summary": { "type": "object" } } } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundControlInput"
+              }
+            }
+          }
         }
       }
     },
@@ -464,6 +1040,222 @@
       }
     },
     "schemas": {
+      "BiddingSnapshot": {
+        "type": "object",
+        "description": "One prompt per round in captured display order. Expiry closes the current round and retains its prompt, bids and winners; only admin Next opens another prompt.",
+        "required": [
+          "success",
+          "status",
+          "currentRound",
+          "currentPrompt",
+          "timerId",
+          "remainingMs",
+          "durationSeconds",
+          "bids",
+          "config"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "bidding",
+              "paused",
+              "between_prompts",
+              "round_ended",
+              "coding",
+              "judging",
+              "finished"
+            ]
+          },
+          "currentRound": {
+            "type": "integer"
+          },
+          "currentPrompt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Prompt"
+              }
+            ],
+            "nullable": true
+          },
+          "promptId": {
+            "type": "integer",
+            "nullable": true
+          },
+          "timerId": {
+            "type": "string",
+            "nullable": true
+          },
+          "remainingMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "elapsedMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "secondsRemaining": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "durationSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "isPaused": {
+            "type": "boolean"
+          },
+          "isRunning": {
+            "type": "boolean"
+          },
+          "hasExpired": {
+            "type": "boolean"
+          },
+          "availableSlots": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "bids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Bid"
+            }
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "minBid": {
+                "type": "integer"
+              },
+              "baseTime": {
+                "type": "integer"
+              },
+              "slotsPerPrompt": {
+                "type": "integer"
+              },
+              "bidDurationSeconds": {
+                "type": "integer"
+              }
+            }
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "roundNumber",
+                "promptId"
+              ],
+              "properties": {
+                "roundNumber": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "promptId": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "totalRounds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hasNextRound": {
+            "type": "boolean"
+          },
+          "nextRoundNumber": {
+            "type": "integer",
+            "nullable": true
+          },
+          "winners": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "summary": {
+            "type": "object",
+            "nullable": true
+          },
+          "completedRound": {
+            "type": "object",
+            "description": "Previous round outcome included when Next opens another prompt",
+            "properties": {
+              "round": {
+                "type": "integer"
+              },
+              "promptId": {
+                "type": "integer"
+              },
+              "winners": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "summary": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "Bid": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "teamId": {
+            "type": "integer"
+          },
+          "promptId": {
+            "type": "integer"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "bidMinutes": {
+            "type": "integer"
+          }
+        }
+      },
+      "BidInput": {
+        "type": "object",
+        "required": [
+          "bidMinutes"
+        ],
+        "properties": {
+          "bidMinutes": {
+            "type": "integer"
+          },
+          "promptId": {
+            "type": "integer"
+          },
+          "round": {
+            "type": "integer"
+          },
+          "timerId": {
+            "type": "string",
+            "description": "Viewed bidding session; send to prevent stale submissions."
+          }
+        }
+      },
+      "RoundControlInput": {
+        "type": "object",
+        "properties": {
+          "timerId": {
+            "type": "string",
+            "nullable": true,
+            "description": "Reject a command if its viewed timer session is no longer active."
+          }
+        }
+      },
       "Error": { "type": "object", "properties": { "success": { "type": "boolean" }, "error": { "type": "object", "properties": { "message": { "type": "string" } } } } },
       "Success": { "type": "object", "properties": { "success": { "type": "boolean" } } },
       "SuccessMessage": { "type": "object", "properties": { "success": { "type": "boolean" }, "message": { "type": "string" } } },
@@ -501,15 +1293,32 @@
       "RoundStartInput": {
         "type": "object",
         "properties": {
-          "round": { "type": "integer", "enum": [1, 2] },
-          "roundNumber": { "type": "integer", "enum": [1, 2] }
-        }
+          "round": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "roundNumber": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "description": "Start the next sequential prompt round; Round N opens Prompt N. Completed rounds cannot be replayed and future rounds cannot be skipped."
       },
       "RoundExtendInput": {
         "type": "object",
         "properties": {
-          "extraSeconds": { "type": "integer", "minimum": 1 },
-          "seconds": { "type": "integer", "minimum": 1 }
+          "extraSeconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "seconds": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "timerId": {
+            "type": "string",
+            "nullable": true
+          }
         }
       },
       "RoundStartResponse": {

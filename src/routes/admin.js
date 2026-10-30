@@ -6,6 +6,8 @@ const router = express.Router();
 
 router.use(requireAdmin);
 
+router.get('/bids', adminController.listBids);
+
 // teams
 router.get('/teams', adminController.listTeams);
 router.post('/teams', adminController.createTeam);

@@ -14,7 +14,8 @@ const authSocket = (socket, next) => {
         : null);
 
     if (!token) {
-      return next(new Error('Authentication token is missing'));
+      socket.user = { role: 'spectator' };
+      return next();
     }
 
     const decoded = verifyToken(token);

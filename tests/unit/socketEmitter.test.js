@@ -1,6 +1,6 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { execSync } = require('node:child_process');
+const { execFileSync } = require('node:child_process');
 const { setIO, getIO, broadcast, sendToTeam } = require('../../src/socket/emitter');
 
 beforeEach(() => {
@@ -79,11 +79,9 @@ test('no circular dependency warnings or undefined exports when requiring socket
     if (typeof gameService.startRound !== 'function') throw new Error('gameService.startRound missing');
     console.log('OK');
   `;
-  const output = execSync(`node --trace-warnings -e "${script.replace(/\n/g, ' ')}"`, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  assert.match(output, /OK/);
+  assert.doesNotThrow(() => execFileSync(process.execPath, ['--trace-warnings', '-e',
+    `process.on('warning', (warning) => { throw warning; }); ${script}`
+  ], { stdio: 'inherit' }));
 });
 
 test('no circular dependency warnings or undefined exports when requiring gameService before socket', () => {
@@ -98,9 +96,7 @@ test('no circular dependency warnings or undefined exports when requiring gameSe
     if (typeof bidHandler !== 'function') throw new Error('bidHandler missing');
     console.log('OK');
   `;
-  const output = execSync(`node --trace-warnings -e "${script.replace(/\n/g, ' ')}"`, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  assert.match(output, /OK/);
+  assert.doesNotThrow(() => execFileSync(process.execPath, ['--trace-warnings', '-e',
+    `process.on('warning', (warning) => { throw warning; }); ${script}`
+  ], { stdio: 'inherit' }));
 });

@@ -205,172 +205,54 @@ Errors: `400` invalid id, `404` unknown id.
 
 ## Round Controls (admin only)
 
+Round numbers identify prompts in captured display order: Round 1 = Prompt 1,
+Round 2 = Prompt 2, etc. There are no repeated passes across all prompts.
+Every round uses the same score multiplier curve.
+
 ### POST /api/admin/round/start
 
-Starts round 1 or round 2. Reveals the first prompt and starts the countdown timer.
-
-Params (JSON body, optional):
-- `round` or `roundNumber` (optional, integer: `1` or `2`). If omitted, defaults to round 1 (or round 2 if round 1 has completed).
-
-```json
-{
-  "success": true,
-  "message": "Round 1 started",
-  "round": 1,
-  "currentPrompt": {
-    "id": 1,
-    "title": "Reverse a Linked List",
-    "description": "Solve in O(N)",
-    "displayOrder": 1
-  },
-  "secondsRemaining": 60,
-  "status": "bidding"
-}
-```
-
-Errors:
-- `400` Round already in progress
-- `400` No prompts found (add prompts first)
-- `400` No active teams found (add teams first)
-- `400` Invalid round number (must be 1 or 2)
-- `400` Round 1 must be completed before starting Round 2
-- `400` All teams already assigned (Round 2 not needed)
-- `400` No prompts have open slots remaining for Round 2
+Accepts optional `{ "roundNumber": N }` (or `round`). Opens the next sequential
+prompt round; defaults to Round 1 initially. Completed rounds cannot be replayed
+and future rounds cannot be skipped. Returns the complete bidding snapshot.
 
 ### POST /api/admin/round/pause
 
-Freezes the current bidding timer and sets game status to `paused`.
-
-No body params.
-
-```json
-{
-  "success": true,
-  "message": "Round paused",
-  "round": 1,
-  "secondsRemaining": 42,
-  "status": "paused"
-}
-```
-
-Errors:
-- `400` Round is not actively bidding
-- `400` Round is already paused
+Freezes the current active countdown. Optional `{ "timerId": "..." }` rejects a
+request from a stale screen. Bids are rejected while paused.
 
 ### POST /api/admin/round/resume
 
-Resumes the frozen timer and restores game status to `bidding`.
-
-No body params.
-
-```json
-{
-  "success": true,
-  "message": "Round resumed",
-  "round": 1,
-  "secondsRemaining": 42,
-  "status": "bidding"
-}
-```
-
-Errors:
-- `400` Cannot resume: round is not paused
+Continues the same paused countdown and session ID.
 
 ### POST /api/admin/round/extend
 
-Adds extra seconds to the current countdown timer. Works while actively bidding or paused.
-
-Params (JSON body):
-- `extraSeconds` or `seconds` (required, positive integer): number of seconds to add.
-
-```json
-{
-  "success": true,
-  "message": "Timer extended by 30 seconds",
-  "extraSeconds": 30,
-  "secondsRemaining": 72
-}
-```
-
-Errors:
-- `400` `extraSeconds` must be a positive integer
-- `400` Cannot extend timer: no prompt is currently active
+Accepts `{ "extraSeconds": 15, "timerId": "..." }` (`seconds` is also accepted).
+Adds time to a running or paused timer. A completed round cannot be extended.
 
 ### POST /api/admin/round/next-prompt
 
-Force skips bidding on the current prompt: evaluates all placed bids, assigns winning teams their prompt with calculated multipliers, and advances to the next eligible prompt (or ends the round if this was the last prompt).
+Only this admin action opens the next prompt round. If the current round is still
+running or paused, it first closes the round and awards its winners. If expiry
+already closed it, the saved result is reused. It then starts Round N+1 on Prompt
+N+1 with a new session. At the last round, it closes bidding without opening
+another prompt. Concurrent stale clicks are rejected.
 
-No body params.
-
-Advancing response:
-```json
-{
-  "success": true,
-  "message": "Advanced to next prompt",
-  "round": 1,
-  "prompt": {
-    "id": 2,
-    "title": "Two Sum Variation",
-    "description": "Find pairs in O(N)",
-    "displayOrder": 2
-  },
-  "promptIndex": 1,
-  "totalPrompts": 4,
-  "winners": [
-    {
-      "teamId": 1,
-      "teamName": "Alpha",
-      "bidMinutes": 45,
-      "multiplier": 1.868
-    }
-  ]
-}
-```
-
-Round ended response (if last prompt or all teams assigned):
-```json
-{
-  "success": true,
-  "message": "Round ended - no more prompts",
-  "round": 1,
-  "status": "round_ended",
-  "winners": [],
-  "summary": {
-    "round": 1,
-    "assignedTeams": 8,
-    "unassignedTeams": 2
-  }
-}
-```
-
-Errors:
-- `400` Cannot advance prompt: no round in progress
+The response is the new prompt's snapshot; `completedRound` includes the previous
+round number, prompt ID, winners and summary when another prompt was opened.
 
 ### POST /api/admin/round/end
 
-Force ends the current active or paused round immediately. Evaluates any bids placed on the current prompt, stops timer, updates status to `round_ended`, and provides a summary.
+Closes and awards the current round and waits for the admin to click Next. It does
+not open another prompt. Timer expiry has the same stop-and-wait behavior.
 
-No body params.
+Closed snapshots keep `currentPrompt`, `bids`, `winners`, `summary`, `timerId` and
+round metadata, with zero remaining time. Refresh and restart retain this view.
 
-```json
-{
-  "success": true,
-  "message": "Round 1 ended",
-  "round": 1,
-  "status": "round_ended",
-  "winners": [],
-  "summary": {
-    "round": 1,
-    "assignedTeams": 8,
-    "unassignedTeams": 2
-  }
-}
-```
+### GET /api/admin/bids?round=N
 
-Errors:
-- `400` No round is currently in progress
-
----
+Lists only the requested prompt round's persisted bids. Omit `round` to return
+all history. Legacy records stored under one bidding pass are labelled by their
+prompt round without deleting or rewriting them.
 
 ## Scores & Leaderboard (admin only)
 
@@ -527,3 +409,21 @@ Any protected endpoint without a valid token returns:
 - `401` `{ "message": "Authentication token has expired" }`
 - `401` `{ "message": "Invalid authentication token" }`
 - `403` `{ "message": "This endpoint is restricted to <role> accounts" }` (wrong role)
+
+
+## Bidding integration
+
+See [shared bidding countdown](client-clock-sync.md) for the current snapshot,
+session-aware bid inputs, restart behavior and deployment steps.
+
+- `GET /api/bid/current` — public prompt, bids, countdown and configured limits.
+- `POST /api/bid/place`, `PUT /api/bid/update` — team bid mutations; include
+  `bidMinutes`, `promptId`, `round`, and `timerId` from the viewed snapshot.
+- `GET /api/bid/assignment` — team assignment and score for refresh/reconnect.
+- `GET /api/bid/my-bids` — the calling team's bid history.
+- `GET /api/bid/leaderboard` — public standings for active teams.
+- `GET /api/admin/bids` — admin-only persisted bid history with prompt/team names.
+
+Timer controls accept `timerId` to reject actions from a stale view. They publish
+one complete `game:status` snapshot to all clients after each successful change.
+Prompt edits are rejected while bidding is active or paused.

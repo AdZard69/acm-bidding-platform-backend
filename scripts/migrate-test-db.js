@@ -20,6 +20,6 @@ if (!/test/i.test(new URL(testDbUrl).pathname)) {
 }
 
 execFileSync('npx', ['prisma', 'migrate', 'deploy'], {
-  env: { ...process.env, DATABASE_URL: testDbUrl },
+  env: { ...process.env, DATABASE_URL: testDbUrl, DIRECT_URL: testDbUrl },
   stdio: 'inherit'
 });

@@ -1,9 +1,10 @@
 const prisma = require('../config/prisma');
 const ApiError = require('../utils/apiError');
-const { validateScore } = require('../utils/validators');
+const { validateScore, isIntegerInput } = require('../utils/validators');
 const { calculateFinalScore } = require('../services/multiplierService');
-const { sendToTeam, broadcast } = require('../socket');
+const { sendToTeam, broadcast } = require('../socket/emitter');
 const SOCKET_EVENTS = require('../constants/socketEvents');
+const { withGameLock } = require('../services/gameLock');
 
 /**
  * Submit or update a judge evaluation score for a team
@@ -12,7 +13,7 @@ const SOCKET_EVENTS = require('../constants/socketEvents');
 const submitScore = async (req, res, next) => {
   try {
     const teamId = Number(req.params.teamId);
-    if (!Number.isInteger(teamId) || teamId <= 0) {
+    if (!isIntegerInput(teamId) || teamId <= 0) {
       throw new ApiError(400, 'Invalid team id');
     }
 
@@ -46,7 +47,7 @@ const submitScore = async (req, res, next) => {
 
     const isUpdate = !!team.score;
 
-    const savedScore = await prisma.score.upsert({
+    const [savedScore] = await prisma.$transaction([prisma.score.upsert({
       where: { teamId },
       update: {
         judgeScore: scoreVal,
@@ -60,17 +61,17 @@ const submitScore = async (req, res, next) => {
         multiplier,
         finalScore
       }
-    });
-
-    await prisma.adminLog.create({
+    }), prisma.adminLog.create({
       data: {
         adminId: req.auth?.adminId || null,
         action: isUpdate ? 'SCORE_OVERRIDE' : 'SUBMIT_SCORE',
         details: `${isUpdate ? 'Updated' : 'Submitted'} judge score ${scoreVal} for team "${team.teamName}" (multiplier: ${multiplier}, final: ${finalScore})`
       }
-    });
+    })]);
 
     sendToTeam(teamId, SOCKET_EVENTS.SERVER.SCORE_RECEIVED, {
+      id: savedScore.id,
+      scoredAt: savedScore.scoredAt,
       teamId,
       judgeScore: scoreVal,
       multiplier,
@@ -110,6 +111,7 @@ const submitScore = async (req, res, next) => {
 const getLeaderboard = async (req, res, next) => {
   try {
     const teams = await prisma.team.findMany({
+      ...(req.publicLeaderboard ? { where: { isActive: true } } : {}),
       include: {
         assignment: {
           include: { prompt: true }
@@ -166,6 +168,6 @@ const getLeaderboard = async (req, res, next) => {
 };
 
 module.exports = {
-  submitScore,
+  submitScore: (req, res, next) => withGameLock(() => submitScore(req, res, next)).catch(next),
   getLeaderboard
 };

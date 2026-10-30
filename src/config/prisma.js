@@ -1,10 +1,18 @@
 const { PrismaClient } = require('@prisma/client');
 const env = require('./env');
+const { databaseUrl } = require('./databaseUrl');
+const { assertOperationActive } = require('../utils/operation');
 
 const prismaClientSingleton = () => {
-  return new PrismaClient({
+  const client = new PrismaClient({
+    datasources: { db: { url: databaseUrl(env.DATABASE_URL, env) } },
     log: env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error']
   });
+  client.$use(async (params, next) => {
+    assertOperationActive();
+    return next(params);
+  });
+  return client;
 };
 
 const globalForPrisma = global;
