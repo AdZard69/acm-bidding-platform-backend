@@ -1,6 +1,6 @@
 const ApiError = require('../utils/apiError');
 const env = require('../config/env');
-const { runOperation, bindOperation } = require('../utils/operation');
+const { runOperation, bindOperation, outsideOperation } = require('../utils/operation');
 
 // Waiting requests can expire, but an executing mutation keeps ownership until
 // it settles. Racing/releasing a running write would allow late bids after awards.
@@ -22,10 +22,13 @@ const createGameQueue = ({ waitTimeoutMs = env.GAME_QUEUE_WAIT_MS, maxPending = 
       drain();
     });
   };
-  return (operation) => runOperation(() => new Promise((resolve, reject) => {
-    if (queue.length >= maxPending) return reject(busy());
-    const entry = { operation: bindOperation(operation), resolve, reject };
-    entry.timeout = setTimeout(() => {
+  return (operation, { mustRun = false } = {}) => runOperation(() => new Promise((resolve, reject) => {
+    if (!mustRun && queue.length >= maxPending) return reject(busy());
+    // Server expiry must survive a busy queue, and gets its own execution budget
+    // when its turn arrives. User requests retain bounded admission/wait times.
+    const execute = mustRun ? () => outsideOperation(() => runOperation(operation)) : bindOperation(operation);
+    const entry = { operation: execute, resolve, reject };
+    if (!mustRun) entry.timeout = setTimeout(() => {
       const index = queue.indexOf(entry);
       if (index < 0) return;
       queue.splice(index, 1);

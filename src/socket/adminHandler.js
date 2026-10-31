@@ -72,6 +72,20 @@ const registerAdminHandlers = (io, socket) => {
       if (typeof ack === 'function') ack({ success: false, error: { message: describeError(err).message, code: describeError(err).code } });
     }
   });
+
+  const handleRerun = async (data, ack) => {
+    try {
+      const round = data?.roundNumber ?? data?.round;
+      const res = await gameService.rerunRound(round, adminId);
+      if (typeof ack === 'function') ack({ success: true, ...res });
+    } catch (err) {
+      logger.warn(`Admin socket rerun-round error: ${describeError(err).message}`);
+      if (typeof ack === 'function') ack({ success: false, error: { message: describeError(err).message, code: describeError(err).code } });
+    }
+  };
+
+  socket.on(SOCKET_EVENTS.ADMIN.RERUN_ROUND, handleRerun);
+  socket.on('admin:rerun', handleRerun);
 };
 
 module.exports = registerAdminHandlers;

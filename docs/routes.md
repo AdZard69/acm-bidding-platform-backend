@@ -248,6 +248,13 @@ not open another prompt. Timer expiry has the same stop-and-wait behavior.
 Closed snapshots keep `currentPrompt`, `bids`, `winners`, `summary`, `timerId` and
 round metadata, with zero remaining time. Refresh and restart retain this view.
 
+### POST /api/admin/round/rerun
+
+Reruns a round (defaults to current round, or accepts optional `{ "round": N }` or `{ "roundNumber": N }`).
+All winners of that round have their assignments removed (`assignment: null`), associated judge scores are deleted,
+previous bids for that round are cleared, and a fresh bidding countdown is started for that round's prompt.
+Returns the updated bidding snapshot.
+
 ### GET /api/admin/bids?round=N
 
 Lists only the requested prompt round's persisted bids. Omit `round` to return

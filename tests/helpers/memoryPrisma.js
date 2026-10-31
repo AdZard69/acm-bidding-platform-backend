@@ -1,5 +1,6 @@
 // In-memory persistence boundary for route/service tests. Real PostgreSQL tests
 // additionally verify connector behavior, SQL constraints and migrations.
+const { isDeepStrictEqual } = require('node:util');
 const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
   const tables = { config: [], admins: [], teams: [], prompts: [], bids: [], assignments: [], scores: [], logs: [] };
   const ids = Object.fromEntries(Object.keys(tables).map((name) => [name, 0]));
@@ -29,6 +30,7 @@ const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
       return matches(table, relatedRow, value?.is || value);
     }
     if (value && typeof value === 'object' && !(value instanceof Date)) {
+      if ('equals' in value) return isDeepStrictEqual(row[key], value.equals);
       if ('not' in value) return row[key] !== value.not;
       if ('in' in value) return value.in.includes(row[key]);
       if ('gt' in value) return row[key] > value.gt;

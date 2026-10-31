@@ -43,7 +43,7 @@ const resetDatabase = async () => {
  * @param {string} password
  * @returns {Promise<object>} created team
  */
-const createTeam = async (teamName, password) => {
+const createTeam = async (teamName, password = 'password123') => {
   return prisma.team.create({
     data: {
       teamName,

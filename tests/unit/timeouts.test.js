@@ -61,6 +61,24 @@ test('one rejected operation does not poison the queue', async () => {
   assert.equal(await queue(() => 42), 42);
 });
 
+test('server expiry survives queue saturation and starts with a fresh operation budget', async () => {
+  const queue = createGameQueue({ waitTimeoutMs: 5, maxPending: 1 });
+  let release;
+  const held = queue(() => new Promise((resolve) => { release = resolve; }));
+  await Promise.resolve();
+  const userRequest = queue(() => assert.fail('expired user request ran'));
+  const rejected = assert.rejects(userRequest, { code: 'GAME_BUSY' });
+  const expiry = runOperation(() => queue(() => {
+    assertOperationActive();
+    return 'closed';
+  }, { mustRun: true }), 1);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  release();
+  await held;
+  await rejected;
+  assert.equal(await expiry, 'closed');
+});
+
 test('database middleware refuses further work after an operation deadline', async () => {
   await runOperation(async () => {
     await new Promise((resolve) => setTimeout(resolve, 5));

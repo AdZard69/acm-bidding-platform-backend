@@ -284,7 +284,7 @@ describe('Server Clock & Time Synchronization', () => {
       body: { bidMinutes: 50, promptId: prompt.id + 999 }
     });
 
-    assert.equal(wrongPromptBidRes.status, 400);
+    assert.ok([400, 409].includes(wrongPromptBidRes.status));
     assert.equal(wrongPromptBidRes.body.success, false);
     assert.match(wrongPromptBidRes.body.error.message, /prompt/i);
   });

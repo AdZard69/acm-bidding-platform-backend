@@ -8,6 +8,7 @@ const { broadcast, sendToTeam } = require('../socket/emitter');
 const { withGameLock } = require('./gameLock');
 const { isIntegerInput } = require('../utils/validators');
 const logger = require('../utils/logger');
+const { outsideOperation, runOperation } = require('../utils/operation');
 const { getRoundDefinitions, getBidRound, normalizeLegacyConfig } = require('./roundService');
 
 const isActive = (config) => [GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status);
@@ -31,19 +32,31 @@ const getOrCreateGameConfig = () => {
 const getEligiblePromptsForRound = () => prisma.prompt.findMany({ orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }] });
 
 const timerCallbacks = (round, adminId = null) => ({
-  onTick: (secondsLeft, promptId, timer) => broadcast(SOCKET_EVENTS.SERVER.TIMER_TICK, {
-    ...timer, secondsLeft, promptId, currentRound: round
-  }),
+  onTick: (secondsLeft, promptId, timer) => {
+    const payload = {
+      ...timer,
+      secondsLeft,
+      promptId,
+      currentRound: round,
+      roundNumber: round,
+      round,
+      status: GAME_STATUS.BIDDING,
+      hasExpired: timer.hasExpired,
+      isRunning: timer.isRunning
+    };
+    broadcast(SOCKET_EVENTS.SERVER.TIMER_TICK, payload);
+  },
   onExpire: (promptId, timerId) => withGameLock(async () => {
     const config = await getOrCreateGameConfig();
     if (config.status !== GAME_STATUS.BIDDING || config.biddingState?.timer?.timerId !== timerId) return;
+    if (!timerManager.hasExpired()) return; // An extension can beat the queued expiry callback.
     // Expiry closes this round. Only an explicit admin action starts another.
     try { return await closeCurrentRound(config, adminId, 'timer_expired'); }
     catch (error) {
       if (timerManager.timerId === timerId && !timerManager.isRunning()) timerManager.resetTimer();
       throw error;
     }
-  })
+  }, { mustRun: true })
 });
 
 let activeConfig = null;
@@ -75,6 +88,12 @@ const ensureTimer = async (config) => {
   }
   if (!isActive(config) || timerManager.getPromptId() !== null) return config;
   let saved = config.biddingState?.timer;
+  if (saved?.pendingStart) {
+    // A crash before activation was checkpointed has no reliable deadline.
+    // Recover frozen, requiring an explicit admin resume instead of inventing time.
+    saved = { ...saved, pendingStart: false, isPaused: true };
+    config = { ...config, status: GAME_STATUS.PAUSED };
+  }
   const prompts = !saved || !config.biddingState?.promptIds
     ? await getEligiblePromptsForRound(config.currentRound, config.slotsPerPrompt) : [];
   if (!saved) {
@@ -103,8 +122,8 @@ const getCurrentPrompt = async (config) => {
   return prompts[config.currentPromptIndex] || null;
 };
 
-const buildState = async (config) => {
-  const currentPrompt = await getCurrentPrompt(config);
+const buildState = async (config, preparedPrompt) => {
+  const currentPrompt = preparedPrompt === undefined ? await getCurrentPrompt(config) : preparedPrompt;
   const bids = currentPrompt ? await prisma.bid.findMany({
     where: { promptId: currentPrompt.id, round: getBidRound(config), team: { isActive: true } },
     include: { team: { select: { teamName: true } } },
@@ -117,9 +136,13 @@ const buildState = async (config) => {
   return {
     success: true,
     ...timer,
+    secondsLeft: timer.secondsRemaining,
     status: config.status,
     currentRound: config.currentRound,
+    roundNumber: config.currentRound,
+    round: config.currentRound,
     currentPrompt,
+    prompt: currentPrompt,
     rounds,
     totalRounds: rounds.length,
     hasNextRound: config.currentRound > 0 && config.currentRound < rounds.length,
@@ -132,7 +155,7 @@ const buildState = async (config) => {
       timerId: closed ? config.biddingState?.timer?.timerId ?? null : null,
       promptId: closed ? currentPrompt?.id ?? null : null,
       startTime: closed ? config.biddingState?.timer?.startTime ?? null : null, endsAt: null,
-      remainingMs: 0, secondsRemaining: 0, elapsedMs: 0,
+      remainingMs: 0, secondsRemaining: 0, secondsLeft: 0, elapsedMs: 0,
       isPaused: false, isRunning: false, hasExpired: true
     } : {}),
     config: {
@@ -168,17 +191,59 @@ const logAction = async (adminId, action, details) => {
   }
 };
 
+const checkpointActivation = (prepared) => {
+  const biddingState = { ...prepared.biddingState, timer: timerManager.serialize() };
+  activeConfig = { ...prepared, biddingState };
+  // Save the actual start/deadline without holding up publication or bids. The
+  // JSON compare prevents a late checkpoint overwriting pause/end/reset/rerun.
+  void outsideOperation(() => runOperation(async () => {
+    await prisma.gameConfig.updateMany({
+      where: { id: prepared.id, biddingState: { equals: prepared.biddingState } },
+      data: { biddingState }
+    });
+  })).catch((error) => logger.warn(`Timer activation checkpoint failed; restart will recover paused (${error.code || error.name})`));
+  return activeConfig;
+};
+
 const startPrompt = async (config, prompt, promptIds) => {
   timerManager.startTimer({
     seconds: config.bidDurationSeconds, promptId: prompt.id,
-    ...timerCallbacks(config.currentRound)
+    ...timerCallbacks(config.currentRound), prepare: true
   });
   try {
-    return await persistTimer(config, promptIds);
+    const prepared = await persistTimer(config, promptIds);
+    // The duration starts AFTER the durable preparation write completes. No
+    // database request or audit write is allowed between activation and broadcast.
+    timerManager.activateTimer();
+    return checkpointActivation(prepared);
   } catch (err) {
     timerManager.resetTimer();
     throw err;
   }
+};
+
+// Prepare all database-backed display data before starting the countdown. Once
+// its timer has been saved, publishing the start must not wait on more reads.
+const openPrompt = async (config, prompt, { fromNext = false, resetWinners } = {}) => {
+  const preparedState = await buildState(config, prompt);
+  await startPrompt(config, prompt, config.biddingState.promptIds);
+  const timer = timerManager.getTimeDetails();
+  const payload = {
+    ...preparedState, ...timer, secondsLeft: timer.secondsRemaining,
+    ...(resetWinners ? { resetWinners } : {})
+  };
+  for (const teamId of resetWinners || []) {
+    sendToTeam(teamId, SOCKET_EVENTS.SERVER.ASSIGNMENT_RECEIVED, null);
+    sendToTeam(teamId, 'assignment:cleared', { round: config.currentRound });
+  }
+  broadcast(SOCKET_EVENTS.SERVER.GAME_STATUS, payload);
+  broadcast(SOCKET_EVENTS.SERVER.ROUND_STARTED, payload);
+  if (fromNext) broadcast(SOCKET_EVENTS.SERVER.PROMPT_NEXT, {
+    ...payload, nextPromptIndex: config.currentPromptIndex, totalPrompts: payload.totalRounds
+  });
+  broadcast(SOCKET_EVENTS.SERVER.PROMPT_REVEAL, payload);
+  broadcast(SOCKET_EVENTS.SERVER.TIMER_TICK, payload);
+  return payload;
 };
 
 const startAtRound = async (config, round, adminId = null, fromNext = false) => {
@@ -187,17 +252,12 @@ const startAtRound = async (config, round, adminId = null, fromNext = false) => 
   const entry = rounds[round - 1];
   const prompt = entry && await prisma.prompt.findUnique({ where: { id: entry.promptId } });
   if (!prompt) throw new ApiError(409, `The prompt for Round ${round} is missing. Reset bidding before changing the prompt list.`);
-  let updated = { ...config, currentRound: round, currentPromptIndex: round - 1, status: GAME_STATUS.BIDDING,
+  const updated = { ...config, currentRound: round, currentPromptIndex: round - 1, status: GAME_STATUS.BIDDING,
     biddingState: { flowVersion: 2, bidRound: round, promptIds: rounds.map((item) => item.promptId) }
   };
-  updated = await startPrompt(updated, prompt, updated.biddingState.promptIds);
-  const timer = timerManager.getTimeDetails();
-  broadcast(SOCKET_EVENTS.SERVER.ROUND_STARTED, { ...timer, roundNumber: round });
-  if (fromNext) broadcast(SOCKET_EVENTS.SERVER.PROMPT_NEXT, { ...timer, roundNumber: round, nextPromptIndex: round - 1, totalPrompts: rounds.length });
-  broadcast(SOCKET_EVENTS.SERVER.PROMPT_REVEAL, { ...timer, ...prompt, promptId: prompt.id, roundNumber: round });
-  const state = await publishState(updated);
-  await logAction(adminId, 'ROUND_START', `Started Round ${round}: prompt ${prompt.id}`);
-  if (fromNext) await logAction(adminId, 'NEXT_PROMPT', `Admin opened Round ${round}: prompt ${prompt.id}`);
+  const state = await openPrompt(updated, prompt, { fromNext });
+  void outsideOperation(() => logAction(adminId, 'ROUND_START', `Started Round ${round}: prompt ${prompt.id}`));
+  if (fromNext) void outsideOperation(() => logAction(adminId, 'NEXT_PROMPT', `Admin opened Round ${round}: prompt ${prompt.id}`));
   return { ...state, message: `Round ${round} started`, round, prompt, promptIndex: round - 1, totalPrompts: rounds.length };
 };
 
@@ -207,38 +267,45 @@ const startRound = async (roundInput, adminId = null) => {
   if (await prisma.team.count({ where: { isActive: true } }) === 0)
     throw new ApiError(400, 'No active teams found. Please create teams before starting a round');
   if (!await prisma.prompt.count()) throw new ApiError(400, 'No prompts found. Please create prompts before starting a round');
-  const round = roundInput != null ? Number(roundInput) : config.currentRound + 1;
+  const round = roundInput != null ? Number(roundInput) : (config.currentRound ? config.currentRound + 1 : 1);
   if (!isIntegerInput(roundInput ?? round) || round < 1) throw new ApiError(400, 'Round number must be a positive integer');
   const rounds = await getRoundDefinitions(config);
   if (round > rounds.length) throw new ApiError(400, `Round number cannot extend beyond the total number of prompts (${rounds.length})`);
-  if (round <= config.currentRound) throw new ApiError(400, `Round ${round} has already been completed. Reset bidding to replay prompts.`);
-  if (round !== config.currentRound + 1) throw new ApiError(400, `Round ${config.currentRound + 1} must be completed before starting Round ${round}`);
   return startAtRound(config, round, adminId);
 };
 
-const requireActiveTimer = async (status, expectedTimerId) => {
+const requireActiveTimer = async (status, expectedTimerId, allowExpired = false) => {
   const config = await ensureTimer(await getOrCreateGameConfig());
   if (status && config.status !== status) {
     const message = status === GAME_STATUS.PAUSED ? 'Cannot resume: round is not paused'
       : config.status === GAME_STATUS.PAUSED ? 'Round is already paused' : 'Cannot pause: round is not actively bidding';
     throw new ApiError(400, message);
   }
-  if (!isActive(config)) throw new ApiError(400, 'Cannot extend timer: no prompt is currently active');
+  if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED) throw new ApiError(400, 'Cannot extend timer: no prompt is currently active');
   if (expectedTimerId && expectedTimerId !== timerManager.timerId)
     throw new ApiError(409, 'The bidding session has changed. Refresh before using timer controls.');
-  if (timerManager.hasExpired()) throw new ApiError(400, 'Bidding time has expired for this prompt');
+  if (!allowExpired && timerManager.hasExpired() && config.status !== GAME_STATUS.PAUSED)
+    throw new ApiError(400, 'Bidding time has expired for this prompt');
   return config;
 };
 
 // Persist timer and game status together. If saving fails, continue from the
 // previous countdown so all clients still agree with the last published state.
-const changeTimer = async (config, mutate, status = config.status) => {
+const changeTimer = async (config, mutate, status = config.status, activateAfterSave = false) => {
   const saved = timerManager.serialize();
+  const savedAt = timerManager.now();
   mutate();
   try {
-    return await persistTimer({ ...config, status });
+    const updated = await persistTimer({ ...config, status });
+    if (!activateAfterSave) return updated;
+    timerManager.activateTimer({ resetStartTime: false });
+    return checkpointActivation(updated);
   } catch (error) {
-    timerManager.startTimer({ promptId: saved.promptId, restored: saved, ...timerCallbacks(config.currentRound) });
+    timerManager.startTimer({ promptId: saved.promptId, restored: {
+      ...saved,
+      remainingMs: Math.max(0, saved.remainingMs - (saved.isPaused ? 0 : timerManager.now() - savedAt)),
+      savedAt: timerManager.wallNow()
+    }, ...timerCallbacks(config.currentRound) });
     throw error;
   }
 };
@@ -254,21 +321,42 @@ const pauseRound = async (adminId = null, timerId) => {
 
 const resumeRound = async (adminId = null, timerId) => {
   let config = await requireActiveTimer(GAME_STATUS.PAUSED, timerId);
-  config = await changeTimer(config, () => timerManager.resumeTimer(), GAME_STATUS.BIDDING);
-  broadcast(SOCKET_EVENTS.SERVER.ROUND_RESUMED, timerManager.getTimeDetails());
-  const state = await publishState(config);
-  await logAction(adminId, 'ROUND_RESUME', `Resumed round ${config.currentRound}`);
+  const preparedState = await buildState(config);
+  config = await changeTimer(config, () => timerManager.prepareResume(), GAME_STATUS.BIDDING, true);
+  const timer = timerManager.getTimeDetails();
+  const state = { ...preparedState, ...timer, status: GAME_STATUS.BIDDING, secondsLeft: timer.secondsRemaining };
+  broadcast(SOCKET_EVENTS.SERVER.GAME_STATUS, state);
+  broadcast(SOCKET_EVENTS.SERVER.ROUND_RESUMED, state);
+  void outsideOperation(() => logAction(adminId, 'ROUND_RESUME', `Resumed round ${config.currentRound}`));
   return { ...state, round: config.currentRound, message: 'Round resumed' };
 };
 
 const extendRound = async (extraSeconds, adminId = null, timerId) => {
-  let config = await requireActiveTimer(undefined, timerId);
+  let config = await requireActiveTimer(undefined, timerId, true);
   const extra = Number(extraSeconds);
   if (!isIntegerInput(extraSeconds) || extra <= 0) throw new ApiError(400, 'extraSeconds must be a positive integer');
-  config = await changeTimer(config, () => timerManager.extendTimer(extra));
+  const targetStatus = config.status === GAME_STATUS.PAUSED ? GAME_STATUS.PAUSED : GAME_STATUS.BIDDING;
+  config = await changeTimer(config, () => timerManager.extendTimer(extra), targetStatus);
   const newSecondsLeft = timerManager.getSecondsRemaining();
-  broadcast(SOCKET_EVENTS.SERVER.TIMER_EXTENDED, { ...timerManager.getTimeDetails(), newSecondsLeft, extraSeconds: extra });
+  const payload = {
+    ...timerManager.getTimeDetails(),
+    status: targetStatus,
+    newSecondsLeft,
+    secondsLeft: newSecondsLeft,
+    secondsRemaining: newSecondsLeft,
+    extraSeconds: extra,
+    hasExpired: false,
+    isRunning: timerManager.isRunning(),
+    currentRound: config.currentRound,
+    roundNumber: config.currentRound,
+    round: config.currentRound
+  };
+  broadcast(SOCKET_EVENTS.SERVER.TIMER_EXTENDED, payload);
+  if (targetStatus === GAME_STATUS.BIDDING) {
+    broadcast(SOCKET_EVENTS.SERVER.ROUND_RESUMED, payload);
+  }
   const state = await publishState(config);
+  broadcast('timer:tick', { ...payload, ...state, secondsLeft: newSecondsLeft });
   await logAction(adminId, 'ROUND_EXTEND', `Extended timer by ${extra}s in round ${config.currentRound}`);
   return { ...state, message: `Timer extended by ${extra} seconds`, extraSeconds: extra };
 };
@@ -313,7 +401,7 @@ const closeCurrentRound = async (config, adminId = null, reason = 'manual_end') 
   const updated = await persistTimer({ ...config, status: GAME_STATUS.ROUND_ENDED,
     biddingState: { ...config.biddingState, winners, summary }
   });
-  broadcast(SOCKET_EVENTS.SERVER.ROUND_ENDED, { roundNumber: config.currentRound, summary });
+  broadcast(SOCKET_EVENTS.SERVER.ROUND_ENDED, { roundNumber: config.currentRound, timerId: timerManager.timerId, summary });
   const state = await publishState(updated);
   broadcast('leaderboard:update', {});
   await logAction(adminId, 'ROUND_END', `Round ${config.currentRound} closed [${reason}]; waiting for admin`);
@@ -356,6 +444,70 @@ const endRound = async (adminId = null, timerId) => {
   return closeCurrentRound(config, adminId);
 };
 
+const rerunRound = async (roundInput, adminId = null) => {
+  const config = await getOrCreateGameConfig();
+  if (await prisma.team.count({ where: { isActive: true } }) === 0) {
+    throw new ApiError(400, 'No active teams found. Please create teams before starting a round');
+  }
+  if (!await prisma.prompt.count()) {
+    throw new ApiError(400, 'No prompts found. Please create prompts before starting a round');
+  }
+
+  const rounds = await getRoundDefinitions(config);
+  const targetRound = roundInput != null ? Number(roundInput) : (config.currentRound || 1);
+
+  if (!isIntegerInput(roundInput ?? targetRound) || targetRound < 1) {
+    throw new ApiError(400, 'Round number must be a positive integer');
+  }
+  if (targetRound > rounds.length) {
+    throw new ApiError(400, `Round number cannot extend beyond the total number of prompts (${rounds.length})`);
+  }
+
+  const entry = rounds[targetRound - 1];
+  const prompt = entry && await prisma.prompt.findUnique({ where: { id: entry.promptId } });
+  if (!prompt) {
+    throw new ApiError(409, `The prompt for Round ${targetRound} is missing. Reset bidding before changing the prompt list.`);
+  }
+
+  // Prompt identity scopes legacy bids too: older auctions stored several
+  // different prompts under the same round number.
+  const roundAssignments = await prisma.assignment.findMany({
+    where: { promptId: prompt.id }, select: { id: true, teamId: true }
+  });
+  const winnerTeamIds = roundAssignments.map((assignment) => assignment.teamId);
+  await prisma.$transaction([
+    prisma.score.deleteMany({ where: { teamId: { in: winnerTeamIds } } }),
+    prisma.assignment.deleteMany({ where: { promptId: prompt.id } }),
+    prisma.bid.deleteMany({ where: { promptId: prompt.id } })
+  ]);
+
+  const updated = {
+    ...config,
+    currentRound: targetRound,
+    currentPromptIndex: targetRound - 1,
+    status: GAME_STATUS.BIDDING,
+    biddingState: {
+      flowVersion: 2,
+      bidRound: targetRound,
+      promptIds: rounds.map((item) => item.promptId),
+      winners: [],
+      summary: null
+    }
+  };
+
+  const syncPayload = await openPrompt(updated, prompt, { resetWinners: winnerTeamIds });
+  broadcast('leaderboard:update', {});
+  broadcast('config:updated', {});
+
+  void outsideOperation(() => logAction(adminId, 'ROUND_RERUN', `Reran Round ${targetRound}: prompt ${prompt.id}. Reset ${winnerTeamIds.length} winner assignment(s).`));
+
+  return {
+    ...syncPayload,
+    message: `Round ${targetRound} rerun started`,
+    resetWinners: winnerTeamIds
+  };
+};
+
 module.exports = {
   getOrCreateGameConfig, getActiveGameConfig, getEligiblePromptsForRound, getCurrentPrompt,
   getCurrentBiddingState, ensureTimer, publishState,
@@ -365,5 +517,6 @@ module.exports = {
   extendRound: (...args) => withGameLock(() => extendRound(...args)),
   nextPrompt: (adminId, timerId = timerManager.timerId) => advanceToNextPromptOrEnd(adminId, 'force_skip', timerId),
   endRound: (adminId, timerId = timerManager.timerId) => withGameLock(() => endRound(adminId, timerId)),
+  rerunRound: (...args) => withGameLock(() => rerunRound(...args)),
   advanceToNextPromptOrEnd
 };

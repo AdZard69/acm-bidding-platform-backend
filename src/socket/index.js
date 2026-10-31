@@ -7,6 +7,7 @@ const { setIO, getIO, broadcast, sendToTeam } = require('./emitter');
 const registerAdminHandlers = require('./adminHandler');
 const registerBidHandlers = require('./bidHandler');
 const SOCKET_EVENTS = require('../constants/socketEvents');
+const timerManager = require('./timerManager');
 
 /**
  * Initializes Socket.IO with the HTTP server
@@ -39,7 +40,8 @@ const initSocket = (server) => {
         serverReceiveTime,
         serverTransmitTime: Date.now(),
         serverTime: serverReceiveTime,
-        serverTimeIso: new Date(serverReceiveTime).toISOString()
+        serverTimeIso: new Date(serverReceiveTime).toISOString(),
+        timer: timerManager.getTimeDetails()
       };
       if (typeof ack === 'function') {
         ack(payload);

@@ -21,5 +21,7 @@ const bindOperation = (operation) => {
   return () => operations.run(context, () => { assertOperationActive(); return operation(); });
 };
 const operationContext = (req, res, next) => runOperation(next);
+// Timers and durable background checkpoints outlive the request that created them.
+const outsideOperation = (operation) => operations.exit(operation);
 
-module.exports = { assertOperationActive, runOperation, bindOperation, operationContext };
+module.exports = { assertOperationActive, runOperation, bindOperation, operationContext, outsideOperation };
