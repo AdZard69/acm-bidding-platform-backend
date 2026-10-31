@@ -384,6 +384,19 @@ const endRound = async (req, res, next) => {
   }
 };
 
+const rerunRound = async (req, res, next) => {
+  try {
+    const { round, roundNumber } = req.body || {};
+    const paramRound = req.params?.round;
+    const queryRound = req.query?.round ?? req.query?.roundNumber;
+    const targetRound = round !== undefined ? round : roundNumber !== undefined ? roundNumber : (paramRound !== undefined ? paramRound : queryRound);
+    const result = await gameService.rerunRound(targetRound, req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const resetGame = async (req, res, next) => {
   try {
     const { wipeTeams, wipePrompts, wipeAll } = req.body || {};
@@ -519,6 +532,7 @@ const controllers = {
   extendRound,
   nextPrompt,
   endRound,
+  rerunRound,
   submitScore: scoreController.submitScore,
   getLeaderboard: scoreController.getLeaderboard,
   resetGame,

@@ -8,23 +8,37 @@ that countdown. They do not display the server's time of day.
 
 - The backend measures elapsed time with `performance.now()`. Changing the server
   date/time cannot change the duration of an auction already running.
+- Start/rerun first persist a frozen timer, then activate and immediately publish
+  the full configured duration. Database preparation cannot consume the first
+  20 seconds of a 60-second auction. Resume uses the same preparation step to
+  retain its exact paused milliseconds. Audit writes do not delay publication.
 - `GET /api/bid/current` returns one uncached snapshot containing status, round,
   prompt, bids, configured limits, available slots and timer details.
 - Every timer mutation publishes that same complete shape as `game:status`.
 - `timer:tick` broadcasts `timerId`, `promptId`, `currentRound`, `remainingMs`,
   `elapsedMs`, `durationSeconds`, `secondsRemaining`, and pause/running flags.
   Clients ignore ticks from a different timer session.
+- Snapshots include `timerStreamId`, an increasing `timerSequence`, and
+  `serverMonotonicTime`. Sequence ordering prevents stale packets from rewinding
+  the display even if the server's wall clock changes. A new process has a new
+  stream ID.
 - Round N identifies Prompt N in the captured display order. At expiry, the server
   awards the current round and stores `round_ended`; it does not start another
   timer. The prompt, bids and winners remain visible until admin Next.
 - `rounds`, `totalRounds`, `hasNextRound` and `nextRoundNumber` describe the sequence.
   A closed snapshot retains its timer session ID, winners and summary so refresh
   and restart cannot accidentally skip or re-award the completed round.
-- The browser anchors `remainingMs` to its own `performance.now()`, with an
-  estimated one-way network delay from a socket ping. It refreshes the snapshot
+- The browser anchors `remainingMs` to its own `performance.now()`. Socket pings
+  include a server monotonic timestamp; clients estimate transit time and age
+  delayed snapshots against that clock instead of restarting an old countdown.
+  It refreshes the snapshot
   on connection, reconnect, tab visibility, and periodically. Display agreement
   is subject to network latency and browser scheduling; the backend decides
   whether a bid is accepted.
+- A connected viewer receives 60 seconds at a fresh start. A late join or
+  reconnect displays the server's actual remaining time, rather than resetting
+  that browser to 60. Successful admin responses update the initiating view
+  immediately, without waiting for another database-backed refresh.
 - Pausing freezes exact remaining milliseconds. An extension increases both
   remaining time and total duration, including while paused. Resume continues
   the same timer session. Finishing or resetting clears the countdown.
@@ -68,6 +82,11 @@ The server checks active status, session identity, eligibility, configured limit
 minute collisions and expiry. It checks expiry again after database reads,
 immediately before accepting the write. Accepted writes finish before winner
 selection. Delayed bids cannot land on a different prompt or a later round.
+Client-supplied countdowns, deadlines and device timestamps never decide expiry.
+The server expires the auction with no connected browsers. Its expiry operation
+has its own request budget and survives queue saturation; a start request's
+expired HTTP budget cannot cancel it. A queued expiry rechecks the deadline so
+it cannot close a timer that has since been extended.
 Admin pause/resume/extend/next/end requests can also include `timerId` to reject
 controls from a stale screen. Missing context remains accepted for older clients.
 
@@ -97,6 +116,12 @@ saved remaining milliseconds. Recovery across a process restart uses saved epoch
 time to account for downtime, then switches to monotonic elapsed time. Existing
 active games from older versions without a saved timer recover paused at the
 configured duration because their former deadline cannot be reconstructed.
+
+Activation checkpoints the actual running deadline asynchronously, using a JSON
+compare to prevent a late write from replacing a newer pause, extension, reset
+or rerun. If the process crashes before that checkpoint succeeds, the frozen
+preparation record recovers paused. Admin Resume is then required; the server
+does not guess when bidding began or silently grant a new running countdown.
 
 The captured prompt order keeps Round N mapped to Prompt N throughout the event.
 Bids and assignments created by the previous pass-based flow are projected into

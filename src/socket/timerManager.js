@@ -1,5 +1,6 @@
 const { performance } = require('node:perf_hooks');
 const { randomUUID } = require('node:crypto');
+const { outsideOperation } = require('../utils/operation');
 
 /** A bidding session countdown. Elapsed time uses a monotonic clock, so changes
  * to the machine's date/time cannot lengthen or shorten an active auction. */
@@ -7,6 +8,8 @@ class TimerManager {
   constructor({ now = () => performance.now(), wallNow = () => Date.now() } = {}) {
     this.now = now;
     this.wallNow = wallNow;
+    this.timerStreamId = randomUUID();
+    this.timerSequence = 0;
     this.resetTimer();
   }
 
@@ -17,7 +20,7 @@ class TimerManager {
     this.deadline = value == null ? null : this.now() + value - this.wallNow();
   }
 
-  startTimer({ seconds, promptId, onTick, onExpire, restored }) {
+  startTimer({ seconds, promptId, onTick, onExpire, restored, prepare = false }) {
     this.resetTimer();
     this.promptId = promptId;
     this.timerId = restored?.timerId || randomUUID();
@@ -30,10 +33,22 @@ class TimerManager {
       : this.durationSeconds * 1000;
     this.remainingMsOnPause = remaining;
     this.secondsRemaining = Math.ceil(remaining / 1000);
-    this.isPaused = restored?.isPaused ?? false;
+    this.pendingStart = prepare;
+    this.isPaused = prepare || (restored?.isPaused ?? false);
     this._endsAt = this.isPaused ? null : this.wallNow() + remaining;
     this.deadline = this.isPaused ? null : this.now() + remaining;
     if (!this.isPaused) this.schedule();
+  }
+
+  prepareResume() {
+    if (this.isPaused) this.pendingStart = true;
+  }
+
+  activateTimer({ resetStartTime = true } = {}) {
+    if (!this.pendingStart) return;
+    this.pendingStart = false;
+    if (resetStartTime) this.startTime = this.wallNow();
+    this.resumeTimer();
   }
 
   schedule() {
@@ -46,7 +61,7 @@ class TimerManager {
         const timerId = this.timerId;
         const expire = this.onExpireCallback;
         this.stopTimer();
-        Promise.resolve().then(() => expire?.(promptId, timerId)).catch((err) => {
+        Promise.resolve().then(() => outsideOperation(() => expire?.(promptId, timerId))).catch((err) => {
           require('../utils/logger').error('Bidding timer expiration failed', err);
         });
       }
@@ -63,6 +78,7 @@ class TimerManager {
     this.isPaused = true;
     this._endsAt = null;
     this.deadline = null;
+    this.pendingStart = false;
     this.secondsRemaining = Math.ceil(this.remainingMsOnPause / 1000);
     return this.secondsRemaining;
   }
@@ -80,10 +96,20 @@ class TimerManager {
     const extra = Number(extraSeconds);
     if (!Number.isFinite(extra) || extra <= 0) return this.getSecondsRemaining();
     this.durationSeconds += extra;
-    if (this.isPaused) this.remainingMsOnPause += extra * 1000;
-    else if (this.isRunning()) {
+    if (this.isPaused) {
+      this.remainingMsOnPause += extra * 1000;
+    } else if (this.isRunning() && this.getRemainingMs() > 0) {
       this.deadline += extra * 1000;
       this._endsAt += extra * 1000;
+    } else {
+      // The deadline may have passed before a delayed interval got to stop.
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+      const remaining = extra * 1000;
+      this.remainingMsOnPause = remaining;
+      this.deadline = this.now() + remaining;
+      this._endsAt = this.wallNow() + remaining;
+      this.schedule();
     }
     this.secondsRemaining = this.getSecondsRemaining();
     return this.secondsRemaining;
@@ -105,6 +131,7 @@ class TimerManager {
     this.startTime = null;
     this._endsAt = null;
     this.deadline = null;
+    this.pendingStart = false;
     this.onTickCallback = null;
     this.onExpireCallback = null;
   }
@@ -130,7 +157,11 @@ class TimerManager {
     const serverTime = this.wallNow();
     const remainingMs = this.getRemainingMs();
     return {
+      timerStreamId: this.timerStreamId,
+      timerSequence: ++this.timerSequence,
+      serverMonotonicTime: this.now(),
       timerId: this.timerId,
+      pendingStart: this.pendingStart,
       serverTime,
       serverTimeIso: new Date(serverTime).toISOString(),
       promptId: this.promptId,

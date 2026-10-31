@@ -33,7 +33,8 @@ const SOCKET_EVENTS = Object.freeze({
     RESUME: 'admin:resume',
     EXTEND: 'admin:extend',
     NEXT_PROMPT: 'admin:next-prompt',
-    END_ROUND: 'admin:end-round'
+    END_ROUND: 'admin:end-round',
+    RERUN_ROUND: 'admin:rerun-round'
   }
 });
 

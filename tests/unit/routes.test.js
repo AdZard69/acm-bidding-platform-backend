@@ -202,6 +202,12 @@ test('round controls start, pause, extend, resume and advance one shared timer w
   assert.notEqual(next.body.timerId, initial.timerId);
   assert.equal((await admin('/round/next-prompt', { timerId: initial.timerId })).status, 409);
   assert.equal((await admin('/round/end', { timerId: next.body.timerId })).body.status, 'round_ended');
+  const rerun = await admin('/round/rerun', { round: 2 });
+  assert.equal(rerun.status, 200);
+  assert.equal(rerun.body.status, 'bidding');
+  assert.equal(rerun.body.currentRound, 2);
+  assert.equal(rerun.body.currentPrompt.id, 2);
+  assert.equal((await admin('/round/end', {})).body.status, 'round_ended');
   const state = await api('/api/bid/current');
   assert.ok(state.body.timerId);
   assert.equal(state.body.currentRound, 2);

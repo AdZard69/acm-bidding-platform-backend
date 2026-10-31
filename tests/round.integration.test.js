@@ -212,7 +212,7 @@ describe('POST /api/admin/round/start', () => {
     assert.match(secondRes.body.error.message, /already in progress/i);
   });
 
-  it('rejects starting round 2 if round 1 was never completed', async () => {
+  it('allows starting round 2 even if round 1 was never completed', async () => {
     const adminToken = await getAdminToken();
     await createTeam('Team 1', 'pass123');
     await prisma.prompt.create({
@@ -222,21 +222,16 @@ describe('POST /api/admin/round/start', () => {
       data: { title: 'P2', description: 'Desc 2', displayOrder: 2 }
     });
 
-    const res = await api('/api/admin/round/round/start' /* typo check */, {
-      method: 'POST',
-      token: adminToken,
-      body: { round: 2 }
-    });
-    // With correct path:
-    const correctRes = await api('/api/admin/round/start', {
+    const res = await api('/api/admin/round/start', {
       method: 'POST',
       token: adminToken,
       body: { round: 2 }
     });
 
-    assert.equal(correctRes.status, 400);
-    assert.equal(correctRes.body.success, false);
-    assert.match(correctRes.body.error.message, /round 1 must be completed/i);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.data.round, 2);
+    assert.equal(res.body.data.currentRound, 2);
   });
 
   it('opens prompt 2 when an admin starts round 2 even if all teams already have assignments', async () => {
@@ -843,6 +838,141 @@ describe('POST /api/admin/round/end', () => {
     assert.equal(endRes.status, 200);
     assert.equal(endRes.body.success, true);
     assert.equal(endRes.body.status, GAME_STATUS.ROUND_ENDED);
+  });
+});
+
+describe('POST /api/admin/round/rerun', () => {
+  it('rejects without auth token', async () => {
+    const res = await api('/api/admin/round/rerun', { method: 'POST' });
+    assert.equal(res.status, 401);
+    assert.equal(res.body.success, false);
+  });
+
+  it('rejects with team token (forbidden)', async () => {
+    const teamToken = await getTeamToken('Team Alpha');
+    const res = await api('/api/admin/round/rerun', {
+      method: 'POST',
+      token: teamToken
+    });
+    assert.equal(res.status, 403);
+    assert.equal(res.body.success, false);
+  });
+
+  it('rejects when no round has been started yet', async () => {
+    const adminToken = await getAdminToken();
+    const res = await api('/api/admin/round/rerun', {
+      method: 'POST',
+      token: adminToken
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error.message, /no round has been started yet/i);
+  });
+
+  it('rejects with invalid round numbers', async () => {
+    const adminToken = await getAdminToken();
+    await createTeam('Team Rerun 1');
+    await prisma.prompt.create({ data: { title: 'P1', description: 'Desc 1', displayOrder: 1 } });
+    await api('/api/admin/round/start', { method: 'POST', token: adminToken });
+
+    for (const bad of [-1, 0, 'abc']) {
+      const res = await api('/api/admin/round/rerun', {
+        method: 'POST',
+        token: adminToken,
+        body: { round: bad }
+      });
+      assert.equal(res.status, 400);
+    }
+  });
+
+  it('rejects when round has not been started yet', async () => {
+    const adminToken = await getAdminToken();
+    await createTeam('Team Rerun 1');
+    await prisma.prompt.create({ data: { title: 'P1', description: 'Desc 1', displayOrder: 1 } });
+    await prisma.prompt.create({ data: { title: 'P2', description: 'Desc 2', displayOrder: 2 } });
+    await api('/api/admin/round/start', { method: 'POST', token: adminToken });
+
+    const res = await api('/api/admin/round/rerun', {
+      method: 'POST',
+      token: adminToken,
+      body: { round: 2 }
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error.message, /not been started yet/i);
+  });
+
+  it('reruns a completed round such that all winners of that round are assigned null and round restarts', async () => {
+    const adminToken = await getAdminToken();
+    const team1 = await createTeam('Rerun Team 1');
+    const team2 = await createTeam('Rerun Team 2');
+    const prompt1 = await prisma.prompt.create({ data: { title: 'P1', description: 'Desc 1', displayOrder: 1 } });
+
+    await api('/api/admin/round/start', { method: 'POST', token: adminToken });
+    await prisma.bid.create({
+      data: { teamId: team1.id, promptId: prompt1.id, bidMinutes: 45, round: 1 }
+    });
+    await prisma.bid.create({
+      data: { teamId: team2.id, promptId: prompt1.id, bidMinutes: 60, round: 1 }
+    });
+
+    const endRes = await api('/api/admin/round/end', { method: 'POST', token: adminToken });
+    assert.equal(endRes.status, 200);
+    assert.equal(endRes.body.status, GAME_STATUS.ROUND_ENDED);
+
+    // Verify team 1 has an assignment (winner)
+    const assignmentBefore = await prisma.assignment.findUnique({ where: { teamId: team1.id } });
+    assert.ok(assignmentBefore);
+    assert.equal(assignmentBefore.promptId, prompt1.id);
+
+    // Submit a score for team 1
+    await prisma.score.create({
+      data: { teamId: team1.id, judgeScore: 90, multiplier: 1.8, finalScore: 162 }
+    });
+    assert.ok(await prisma.score.findUnique({ where: { teamId: team1.id } }));
+
+    // Now rerun round 1
+    const rerunRes = await api('/api/admin/round/rerun', {
+      method: 'POST',
+      token: adminToken,
+      body: { round: 1 }
+    });
+
+    assert.equal(rerunRes.status, 200);
+    assert.equal(rerunRes.body.status, GAME_STATUS.BIDDING);
+    assert.equal(rerunRes.body.currentRound, 1);
+    assert.equal(rerunRes.body.currentPrompt.id, prompt1.id);
+    assert.deepEqual(rerunRes.body.resetWinners, [team1.id]);
+
+    // Crucial check: all winners of that round are assigned null!
+    const assignmentAfter = await prisma.assignment.findUnique({ where: { teamId: team1.id } });
+    assert.equal(assignmentAfter, null);
+
+    // Verify team query returns assignment: null
+    const teamListRes = await api('/api/admin/teams', { token: adminToken });
+    const team1Data = teamListRes.body.teams.find((t) => t.id === team1.id);
+    assert.equal(team1Data.assignment, null);
+    assert.equal(team1Data.score, null);
+
+    // Verify scores and bids for round 1 were deleted
+    const scoreAfter = await prisma.score.findUnique({ where: { teamId: team1.id } });
+    assert.equal(scoreAfter, null);
+    const bidsAfter = await prisma.bid.findMany({ where: { round: 1 } });
+    assert.equal(bidsAfter.length, 0);
+
+    // Verify team 1 can bid again in the rerun round
+    const team1Token = await api('/api/auth/team/login', {
+      method: 'POST',
+      body: { teamName: 'Rerun Team 1', password: 'password123' }
+    });
+    const bidRes = await api('/api/bid/place', {
+      method: 'POST',
+      token: team1Token.body.token,
+      body: { bidMinutes: 50, promptId: prompt1.id, round: 1, timerId: rerunRes.body.timerId }
+    });
+    assert.equal(bidRes.status, 200);
+    assert.equal(bidRes.body.success, true);
+
+    const log = await prisma.adminLog.findFirst({ where: { action: 'ROUND_RERUN' } });
+    assert.ok(log);
   });
 });
 

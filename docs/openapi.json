@@ -935,6 +935,51 @@
         }
       }
     },
+    "/admin/round/rerun": {
+      "post": {
+        "tags": [
+          "Admin · Rounds"
+        ],
+        "summary": "Rerun a round resetting its winners to null",
+        "description": "Reruns a round, assigning null to all winners of that round, deleting their assignments, scores, and bids, and restarting the bidding timer for the prompt.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoundStartInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated shared bidding snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BiddingSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
     "/admin/scores/{teamId}": {
       "post": {
         "tags": ["Admin · Scores & Leaderboard"],
@@ -1089,6 +1134,18 @@
           "timerId": {
             "type": "string",
             "nullable": true
+          },
+          "timerStreamId": {
+            "type": "string",
+            "description": "Identifies the server process owning the central countdown."
+          },
+          "timerSequence": {
+            "type": "integer",
+            "description": "Increasing snapshot order within a timer stream, independent of wall-clock changes."
+          },
+          "serverMonotonicTime": {
+            "type": "number",
+            "description": "Server elapsed milliseconds used to age delayed snapshots after a socket time-sync exchange."
           },
           "remainingMs": {
             "type": "number",

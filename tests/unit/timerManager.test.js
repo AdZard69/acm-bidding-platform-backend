@@ -175,3 +175,54 @@ test('timer expires once even when interval callbacks were delayed', async (t) =
   assert.equal(timer.getSecondsRemaining(), 0);
   timer.resetTimer();
 });
+
+test('preparation is frozen until activation and establishes the real start time', () => {
+  let elapsed = 0;
+  const timer = new timerManager.TimerManager({ now: () => elapsed, wallNow: () => 1700000000000 + elapsed });
+  timer.startTimer({ seconds: 60, promptId: 1, prepare: true });
+  elapsed = 20000;
+  assert.equal(timer.getRemainingMs(), 60000);
+  assert.equal(timer.isRunning(), false);
+  timer.activateTimer();
+  assert.equal(timer.getStartTime(), 1700000020000);
+  assert.equal(timer.getEndsAt(), 1700000080000);
+  elapsed += 60000;
+  assert.equal(timer.getRemainingMs(), 0);
+  assert.equal(timer.hasExpired(), true);
+  timer.resetTimer();
+});
+
+test('snapshot ordering stays increasing across clock changes and round resets', () => {
+  let elapsed = 0;
+  let wall = 1700000000000;
+  const timer = new timerManager.TimerManager({ now: () => elapsed, wallNow: () => wall });
+  timer.startTimer({ seconds: 60, promptId: 1 });
+  const first = timer.getTimeDetails();
+  elapsed = 1000;
+  wall -= 86400000;
+  const second = timer.getTimeDetails();
+  assert.equal(second.remainingMs, 59000);
+  assert.ok(second.timerSequence > first.timerSequence);
+  assert.equal(second.timerStreamId, first.timerStreamId);
+  assert.equal(second.serverMonotonicTime, 1000);
+  timer.startTimer({ seconds: 60, promptId: 2 });
+  const third = timer.getTimeDetails();
+  assert.ok(third.timerSequence > second.timerSequence);
+  assert.equal(third.timerStreamId, second.timerStreamId);
+  timer.resetTimer();
+});
+
+test('extending after a delayed interval missed expiry gives the full added duration', () => {
+  let elapsed = 0;
+  const timer = new timerManager.TimerManager({ now: () => elapsed });
+  timer.startTimer({ seconds: 60, promptId: 1 });
+  const id = timer.timerId;
+  elapsed = 80000;
+  assert.equal(timer.hasExpired(), true);
+  assert.equal(timer.extendTimer(15), 15);
+  assert.equal(timer.timerId, id);
+  assert.equal(timer.hasExpired(), false);
+  elapsed += 15000;
+  assert.equal(timer.hasExpired(), true);
+  timer.resetTimer();
+});
