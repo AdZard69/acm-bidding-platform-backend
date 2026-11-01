@@ -12,15 +12,17 @@ const DEFAULT_MIN_BID = 30;
 
 const K_FACTORS = Object.freeze({
   1: 1.0,
-  2: 1.0
+  2: 0.7
 });
 
 /**
  * Get k-factor for a given round
- * @param {number} round - Round number
+ * @param {number} round - 1 or 2
  * @returns {number}
  */
-const getKFactor = () => 1.0;
+const getKFactor = (round = 1) => {
+  return K_FACTORS[round] !== undefined ? K_FACTORS[round] : 1.0;
+};
 
 /**
  * Calculates multiplier for a given bid and round

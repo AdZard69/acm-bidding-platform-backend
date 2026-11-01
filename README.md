@@ -4,71 +4,126 @@ backend + admin panel for "bid and code" — a hackathon format where teams bid 
 
 ---
 
-## how bidding works
+## what is this
 
-Each prompt is one round: Round 1 opens Prompt 1, Round 2 opens Prompt 2, and so
-on in display order. The order is captured when bidding starts. The admin starts
-the first round and clicks **Next** to open each subsequent prompt.
+we're running a hackathon called **Bid and Code**. up to 10 teams show up in person, and instead of just handing out problem statements, we make them bid for it.
 
-Each prompt has its own server-owned countdown. At zero, bidding closes and
-winners are assigned, but the prompt, bids and results stay visible. The server
-never opens another prompt on its own. **End Current Round** also closes a round
-without opening the next. An admin can click Next early to close and award the
-current round before opening the next one.
+there are 4 prompts (problem statements). each prompt is shown on a big screen for 1 minute. during that minute, all teams place their bids — they're bidding how many minutes they'll take to solve that prompt. lower bid = less time to code but a higher score multiplier later.
 
-Teams bid their coding time in minutes (defaults: 30–120). The lowest unique bids
-win the configured slots, and a team can receive only one assignment. Each bid
-and assignment belongs to that prompt's round. Admin history tabs show only that
-round's bids, including history written by the previous pass-based implementation.
-Existing records and earned scores are preserved.
+its an open auction. everyone can see everyone's bids in real time on screen. no duplicate bids allowed — if someone already bid 60 mins, you can't bid 60.
 
-## scoring
+after the minute is up, the 3 lowest bidders win that prompt and get pulled out of bidding. then the next prompt shows up and the remaining teams bid again. this goes on for all 4 prompts.
 
-Every prompt round uses the same curve:
+after round 1, any team that didn't land a prompt (either they lost every bid or just didn't bid) gets a second shot. round 2 goes through the same prompts again but only for ones that still have open slots. same 1 minute per prompt. the catch — round 2 bidders get a worse multiplier than round 1 winners. you snooze, you kinda lose.
 
-```text
-multiplier = exp(1 - bidMinutes / baseTime)
-finalScore = judgeScore * multiplier
+once everyone has a prompt, teams code for the time they committed to. bid 45 mins? you get 45 mins. bid 80? you get 80. after time's up judges score your work out of 100, and your final score = judge score × multiplier.
+
+the multiplier is where it gets spicy.
+
+---
+
+## the multiplying factor
+
+this needed to be fair. like, genuinely fair — not just "lower bid = 10x score" type unfair. we went with an exponential curve that rewards aggressive bids but doesn't completely destroy conservative ones.
+
+### formula
+
+```
+multiplier = e ^ (k × (1 - bid / base_time))
 ```
 
-There is no later-round penalty. With a 120-minute base, a 45-minute bid receives
-a 1.868 multiplier whether it wins Round 1 or Round 4. Existing earned multipliers
-and scores remain stored as awarded.
+where:
+- `base_time` = 120 minutes (the starting reference time / maximum bid)
+- `bid` = whatever the team bid (minimum 30 mins, max 120 mins)
+- `k` = 1.0 for round 1, 0.7 for round 2
+- `e` = euler's number (~2.718)
 
-## database timeouts and route verification
+### why this works
 
-Run `npm run db:check` to check the configured database connection and timer
-schema without changing data. `/api/health/ready` reports database readiness;
-`/api/health` remains a liveness endpoint. Startup retries failed initialization.
+the exponent `(1 - bid/base_time)` gives us a value between 0 and 0.75 (since min bid is 30). when bid equals base time (120 mins), multiplier is exactly 1.0 — no advantage, no penalty. as the bid drops toward 30 mins, the multiplier climbs exponentially up to 2.117.
 
-`npm run test:routes` exercises all 42 registered HTTP routes, including auth,
-validation and simulated database outages, without needing a TCP port. See
-[route verification and timeout repairs](docs/route-verification.md) for exact
-coverage, runtime limits and the live PostgreSQL verification boundary.
+### round 1 multiplier table (k = 1.0)
 
-## synchronized bidding countdown
+| bid (mins) | multiplier | boost |
+|-----------|-----------|-------|
+| 120 | 1.000 | +0% |
+| 110 | 1.087 | +8.7% |
+| 100 | 1.181 | +18.1% |
+| 90 | 1.284 | +28.4% |
+| 80 | 1.396 | +39.6% |
+| 70 | 1.517 | +51.7% |
+| 60 | 1.649 | +64.9% |
+| 50 | 1.792 | +79.2% |
+| 40 | 1.948 | +94.8% |
+| 30 | 2.117 | +111.7% |
 
-The backend starts a per-prompt countdown when bidding begins. Admin, team and
-arena screens share its remaining time, pause/resume/extensions and updates.
-The timer survives backend restarts through `GameConfig.biddingState`.
+### round 2 multiplier table (k = 0.7)
 
-Apply migrations with `npm run prisma:deploy`, then generate the client with
-`npm run prisma:generate` before starting this version. Run one backend instance.
-See [bidding timer integration and deployment](docs/client-clock-sync.md) for the
-state contract, recovery behavior and test commands.
+| bid (mins) | multiplier | boost |
+|-----------|-----------|-------|
+| 120 | 1.000 | +0% |
+| 110 | 1.060 | +6.0% |
+| 100 | 1.124 | +12.4% |
+| 90 | 1.191 | +19.1% |
+| 80 | 1.263 | +26.3% |
+| 70 | 1.339 | +33.9% |
+| 60 | 1.419 | +41.9% |
+| 50 | 1.504 | +50.4% |
+| 40 | 1.595 | +59.5% |
+| 30 | 1.690 | +69.0% |
 
-## manual round flow
+### fairness check
 
-```text
-Start Round 1 → Prompt 1 timer → timer ends → Round 1 results stay visible
-Admin clicks Next → Round 2 / Prompt 2 timer → timer ends → Round 2 results stay visible
-Admin clicks Next → Round 3 / Prompt 3 timer → ...
+say team A bids 50 mins in round 1 (multiplier 1.792) and gets a judge score of 70.
+final score = 70 × 1.792 = **125.44**
+
+team B plays safe, bids 110 mins in round 1 (multiplier 1.087), scores 90 from judges.
+final score = 90 × 1.087 = **97.83**
+
+team A wins even though their code had a few rough edges — but they also delivered in under half the total available time. risk = reward.
+
+what if someone overcommits? team C bids 30 mins (multiplier 2.117) but panics and delivers an incomplete project, scoring 45 from judges:
+final score = 45 × 2.117 = **95.27**
+
+team C loses to both Team A and Team B. the formula rewards speed, but not at the cost of total failure.
+
+now if someone lands in round 2 and bids 30 mins (multiplier 1.690), scores 75:
+final score = 75 × 1.690 = **126.75**
+
+they can still compete, but the reduced k factor makes sure round 2 winners don't get an outsized advantage.
+
+---
+
+## how the bidding flow works
+
+### round 1 (4 minutes total)
+
+```
+prompt 1 shown → 60 sec timer → all teams bid → 3 lowest win → removed from pool
+prompt 2 shown → 60 sec timer → remaining teams bid → 3 lowest win → removed
+prompt 3 shown → 60 sec timer → remaining teams bid → 3 lowest win → removed
+prompt 4 shown → 60 sec timer → remaining teams bid → 3 lowest win → removed
 ```
 
-Pausing and extending affect only the current timer. A completed round cannot be
-replayed or skipped through the Start action. Next works while bidding is active,
-paused, or closed, and one click advances by one prompt. The last round has no
-next prompt. Reset bidding before adding or reordering round prompts.
+after each prompt's timer ends, the 3 teams with the lowest bids get assigned that prompt. they're done bidding. the rest move on.
+
+with 10 teams and 4 prompts (3 slots each = 12 total slots), everyone should have a prompt by end of round 1. but things happen — teams might not bid, or fewer teams might show up, so round 2 exists as a safety net.
+
+### round 2 (only if needed)
+
+same flow but only for:
+- teams that haven't been assigned a prompt yet
+- prompts that still have open slots (fewer than 3 teams assigned)
+
+round 2 uses `k = 0.7` instead of `k = 1.0` for the multiplier. you still get rewarded for low bids, just not as much.
+
+### edge cases
+
+- **team doesn't bid during a prompt's window**: treated as "didn't participate" for that prompt. no penalty other than not winning that slot.
+- **only 1-2 teams left for last prompt**: they get it automatically. if only 1 team is left and doesn't bid, they get assigned the remaining prompt at base time (multiplier = 1.0).
+- **fewer than 10 teams show up**: admin adjusts team count before starting. the math still works, you just might have fewer than 3 teams per prompt.
+
+---
 
 ## tech stack
 
@@ -98,7 +153,7 @@ schema lives in `prisma/schema.prisma`. 8 models:
 
 key constraints worth knowing:
 - `@@unique([promptId, bidMinutes, round])` on Bid — prevents two teams from bidding the same minutes on the same prompt in the same round.
-- `teamId` is `@unique` on Assignment — each team gets at most one prompt assignment.
+- `teamId` is `@unique` on Assignment — each team gets exactly one prompt.
 - `username` is `@unique` on Admin and `teamName` is `@unique` on Team.
 - GameConfig `status` tracks the game state: `waiting`, `bidding`, `paused`, `between_prompts`, `round_ended`, `coding`, `judging`, `finished`
 
@@ -142,11 +197,11 @@ POST   /api/admin/prompts              → add a prompt { title, description }
 PUT    /api/admin/prompts/:id          → edit prompt
 DELETE /api/admin/prompts/:id          → remove prompt
 
-POST   /api/admin/round/start          → open the next prompt round (Round N = Prompt N)
+POST   /api/admin/round/start          → start round 1 (or round 2)
 POST   /api/admin/round/pause          → pause current timer
 POST   /api/admin/round/resume         → resume timer
 POST   /api/admin/round/extend         → add time { extraSeconds }
-POST   /api/admin/round/next-prompt    → manually open the next prompt round
+POST   /api/admin/round/next-prompt    → force skip to next prompt
 POST   /api/admin/round/end            → force end current round
 
 PUT    /api/admin/config               → update game settings { baseTime, minBid, slotsPerPrompt, ... }
@@ -291,7 +346,7 @@ the admin is basically the game master. here's what they can do:
 - **pause/resume**: if something goes wrong mid-bid (technical issues, someone has a question), admin can freeze the timer.
 - **extend time**: add extra seconds to the current prompt's timer if needed.
 - **skip prompt**: force-move to the next prompt if the current one's done early.
-- **next round**: after a round closes, click Next to open the next prompt; all rounds share the same multiplier curve.
+- **start round 2**: after round 1 ends, admin checks if any teams are unassigned and starts round 2 if needed.
 - **submit scores**: after coding is done, admin enters judge scores for each team. system auto-calculates final score using the multiplier.
 - **view leaderboard**: real-time leaderboard showing all teams, their prompts, bid times, multipliers, judge scores, and final scores.
 - **reset**: blow everything away and start fresh. just in case.
@@ -390,9 +445,9 @@ step by step, the whole flow:
 6. they can see everyone else's bids updating in real time
 7. timer hits 0, system picks the 3 lowest bids as winners
 8. winners get their assignment notification with their multiplier
-9. the admin clicks Next to open Round 2 / Prompt 2; repeat manually for all prompts
-10. after each round, results stay visible until the admin clicks Next
-11. admin clicks Next for each remaining prompt; each prompt has its own round and the same multiplier curve
+9. next prompt appears, repeat for all 4
+10. after round 1, admin checks if any teams are left without a prompt
+11. if yes, admin starts round 2 (same flow, reduced multiplier)
 12. all teams now have prompts — coding begins
 13. each team's timer counts down from their bid time
 14. time's up → judges evaluate → admin enters scores

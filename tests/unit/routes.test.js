@@ -199,19 +199,20 @@ test('round controls start, pause, extend, resume and advance one shared timer w
   assert.equal((await admin('/prompts/1', undefined, 'DELETE')).status, 400);
   const next = await admin('/round/next-prompt', { timerId: initial.timerId });
   assert.equal(next.body.currentPrompt.id, 2);
+  assert.equal(next.body.currentRound, 1);
   assert.notEqual(next.body.timerId, initial.timerId);
   assert.equal((await admin('/round/next-prompt', { timerId: initial.timerId })).status, 409);
   assert.equal((await admin('/round/end', { timerId: next.body.timerId })).body.status, 'round_ended');
-  const rerun = await admin('/round/rerun', { round: 2 });
+  const rerun = await admin('/round/rerun', { round: 1 });
   assert.equal(rerun.status, 200);
   assert.equal(rerun.body.status, 'bidding');
-  assert.equal(rerun.body.currentRound, 2);
-  assert.equal(rerun.body.currentPrompt.id, 2);
+  assert.equal(rerun.body.currentRound, 1);
+  assert.equal(rerun.body.currentPrompt.id, 1);
   assert.equal((await admin('/round/end', {})).body.status, 'round_ended');
   const state = await api('/api/bid/current');
   assert.ok(state.body.timerId);
-  assert.equal(state.body.currentRound, 2);
-  assert.equal(state.body.currentPrompt.id, 2);
+  assert.equal(state.body.currentRound, 1);
+  assert.equal(state.body.currentPrompt.id, 1);
   assert.equal(state.body.secondsRemaining, 0);
 });
 
@@ -262,13 +263,12 @@ test('winner assignment, score submission/override and both leaderboards return 
 test('deleting an awarded prompt removes dependent bids, assignments and scores without damaging other prompts', async () => {
   await start();
   await bid(45);
+  // Cannot delete while bidding is in progress
+  assert.equal((await admin('/prompts/1', undefined, 'DELETE')).status, 400);
   await admin('/round/end', {});
   await admin('/scores/1', { judgeScore: 80 });
   await database.assignment.create({ data: { teamId: 2, promptId: 2, bidMinutes: 60, round: 1, multiplier: 1.649 } });
   await admin('/scores/2', { judgeScore: 90 });
-  assert.equal((await admin('/prompts/1', undefined, 'DELETE')).status, 400);
-  await admin('/round/next-prompt', {});
-  await admin('/round/end', {});
   assert.equal((await admin('/prompts/1', undefined, 'DELETE')).status, 200);
   assert.equal(database.tables.bids.length, 0);
   assert.equal(database.tables.assignments.length, 1);
@@ -403,7 +403,7 @@ test('socket bid and admin actions acknowledge database failures with the same s
 });
 
 
-test('HTTP manual progression increments the round and returns only the requested round history', async (t) => {
+test('HTTP manual progression advances prompts within round 1 and isolates round 2 bids', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const first = await start({ slotsPerPrompt: 1 });
   await bid(40);
@@ -419,13 +419,10 @@ test('HTTP manual progression increments the round and returns only the requeste
   assert.equal(events.filter((event) => event.event === 'prompt:next').length, 0);
   const next = await admin('/round/next-prompt', { timerId: first.timerId });
   assert.equal(next.status, 200);
-  assert.equal(next.body.currentRound, 2);
+  assert.equal(next.body.currentRound, 1);
   assert.equal(next.body.currentPrompt.id, 2);
-  await api('/api/bid/place', { method: 'POST', body: { bidMinutes: 50, round: 2, promptId: 2, timerId: next.body.timerId }, token: secondToken });
+  await api('/api/bid/place', { method: 'POST', body: { bidMinutes: 50, round: 1, promptId: 2, timerId: next.body.timerId }, token: secondToken });
   const firstHistory = await api('/api/admin/bids?round=1', { token: adminToken });
-  const secondHistory = await api('/api/admin/bids?round=2', { token: adminToken });
-  assert.equal(firstHistory.body.bids.length, 2);
-  assert.equal(secondHistory.body.bids.length, 1);
-  assert.ok(secondHistory.body.bids.every((entry) => entry.round === 2 && entry.promptId === 2));
+  assert.equal(firstHistory.body.bids.length, 3);
   assert.equal((await api('/api/admin/bids?round=bad', { token: adminToken })).status, 400);
 });
