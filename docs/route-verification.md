@@ -36,7 +36,7 @@ constraints and transaction rollback. These are not live PostgreSQL results.
 | POST | `/api/admin/round/pause` | Freezes remaining time and closes bid acceptance |
 | POST | `/api/admin/round/resume` | Continues the same session |
 | POST | `/api/admin/round/extend` | Extends paused time; rejects invalid/stale session inputs |
-| POST | `/api/admin/round/next-prompt` | Manually closes the current round, opens the next prompt round once, and rejects a stale session |
+| POST | `/api/admin/round/next-prompt` | Closes the current prompt, opens the next prompt or eligible pass once, and rejects a stale session |
 | POST | `/api/admin/round/end` | Closes the current round, retains its prompt/bids/results and waits for admin Next |
 | POST | `/api/admin/scores/:teamId` | Requires assignment; calculates/overrides score atomically with audit log |
 | GET | `/api/admin/leaderboard` | Consistent numeric scores and ranking |

@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const gameService = require('../services/gameService');
 const submissionService = require('../services/submissionService');
+const { publicRound } = require('../services/roundService');
 
 /**
  * Returns current prompt, seconds left, and placed bids for that prompt
@@ -37,7 +38,8 @@ const getMyBids = async (req, res, next) => {
       include: { prompt: true },
       orderBy: { submittedAt: 'desc' }
     });
-    res.status(200).json({ success: true, bids });
+    const config = await gameService.getOrCreateGameConfig();
+    res.status(200).json({ success: true, bids: bids.map((bid) => publicRound(bid, config)) });
   } catch (err) {
     next(err);
   }
@@ -54,10 +56,10 @@ const getMyAssignment = async (req, res, next) => {
       include: { prompt: true }
     });
     const score = await prisma.score.findUnique({ where: { teamId } });
+    const config = await gameService.getOrCreateGameConfig();
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({
-      success: true,
-      assignment: assignment ? { ...assignment, multiplier: Number(assignment.multiplier) } : null,
+    res.status(200).json({ success: true,
+      assignment: assignment ? { ...publicRound(assignment, config), multiplier: Number(assignment.multiplier) } : null,
       score: score ? { ...score, multiplier: Number(score.multiplier), finalScore: Number(score.finalScore) } : null
     });
   } catch (err) {

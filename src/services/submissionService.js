@@ -339,7 +339,6 @@ const getMySubmission = async (teamId) => {
  */
 const listAllSubmissions = async () => {
   const teams = await prisma.team.findMany({
-    where: { isActive: true },
     include: {
       assignment: { include: { prompt: true } },
       submission: true

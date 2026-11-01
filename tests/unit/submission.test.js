@@ -148,3 +148,14 @@ test('getMySubmission and listAllSubmissions report accurate timing and deadline
   assert.equal(all.submissions[0].isSubmitted, true);
   assert.equal(all.submissions[0].isExpired, false);
 });
+
+
+test('admin submissions includes every registered team, including inactive teams with submissions', async () => {
+  await database.team.create({ data: { id: 2, teamName: 'Inactive Team', isActive: false } });
+  await database.assignment.create({ data: { teamId: 2, promptId: 1, round: 1, bidMinutes: 45, multiplier: 1.5 } });
+  await database.submission.create({ data: { teamId: 2, githubUrl: 'https://github.com/team/project', submittedAt: new Date() } });
+  const result = await submissionService.listAllSubmissions();
+  assert.equal(result.submissions.length, 2);
+  assert.equal(result.submissions.filter((row) => row.isSubmitted).length, 1);
+  assert.equal(result.submissions.find((row) => row.teamId === 2).assignment.promptId, 1);
+});

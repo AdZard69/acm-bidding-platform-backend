@@ -5,6 +5,7 @@ const { withGameLock } = require('./gameLock');
 const { broadcast } = require('../socket/emitter');
 const ApiError = require('../utils/apiError');
 const { isIntegerInput } = require('../utils/validators');
+const { getBidRound } = require('./roundService');
 
 // HTTP and Socket.IO use the same validation, deadline and write ordering.
 const submitBid = (teamId, input = {}) => withGameLock(async () => {
@@ -25,7 +26,9 @@ const submitBid = (teamId, input = {}) => withGameLock(async () => {
   const team = await prisma.team.findUnique({ where: { id: teamId }, include: { assignment: true } });
   if (!team || !team.isActive) throw new ApiError(403, 'Team account is deactivated or not found');
   if (team.assignment) throw new ApiError(400, 'Team already has an assigned prompt');
-  const key = { teamId, promptId, round: config.currentRound };
+  if (await prisma.assignment.count({ where: { promptId } }) >= config.slotsPerPrompt)
+    throw new ApiError(400, 'This prompt has no available slots');
+  const key = { teamId, promptId, round: getBidRound(config) };
   const previous = await prisma.bid.findUnique({ where: { teamId_promptId_round: key } });
   // Re-check immediately before accepting: database reads may have crossed expiry.
   if (timerManager.hasExpired()) throw new ApiError(400, 'Bidding time has expired for this prompt');

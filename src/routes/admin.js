@@ -29,6 +29,7 @@ router.post('/round/extend', adminController.extendRound);
 router.post('/round/next-prompt', adminController.nextPrompt);
 router.post('/round/end', adminController.endRound);
 router.post('/round/rerun', adminController.rerunRound);
+router.post('/prompt/rerun', adminController.rerunPrompt);
 
 // scores & leaderboard
 router.post('/scores/:teamId', adminController.submitScore);

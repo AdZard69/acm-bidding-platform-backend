@@ -205,15 +205,17 @@ Errors: `400` invalid id, `404` unknown id.
 
 ## Round Controls (admin only)
 
-Round numbers identify prompts in captured display order: Round 1 = Prompt 1,
-Round 2 = Prompt 2, etc. There are no repeated passes across all prompts.
-Every round uses the same score multiplier curve.
+Round numbers count complete passes through the prompt list. Round 1 visits every
+prompt; Round 2 becomes available only after that pass if unassigned teams and
+open slots remain. Round 2 revisits prompts with free slots and is the final pass.
+Round 1 uses k = 1.0; Round 2 uses k = 0.7.
 
 ### POST /api/admin/round/start
 
-Accepts optional `{ "roundNumber": N }` (or `round`). Opens the next sequential
-prompt round; defaults to Round 1 initially. Completed rounds cannot be replayed
-and future rounds cannot be skipped. Returns the complete bidding snapshot.
+Accepts optional `{ "roundNumber": N }` (or `round`). Opens the next prompt of the
+current pass, or the first available prompt of the next eligible pass. Defaults
+to Round 1 initially. A future pass cannot skip remaining prompts. Use rerun to
+replay a pass. Returns the complete bidding snapshot.
 
 ### POST /api/admin/round/pause
 
@@ -227,22 +229,25 @@ Continues the same paused countdown and session ID.
 ### POST /api/admin/round/extend
 
 Accepts `{ "extraSeconds": 15, "timerId": "..." }` (`seconds` is also accepted).
-Adds time to a running or paused timer. A completed round cannot be extended.
+Adds time to a running or paused timer. After automatic expiry, Extend reopens
+the same prompt, preserves its bids, and withdraws its provisional winner
+assignments and scores before restarting the countdown. Manually closed prompts
+use Rerun to reopen. Stale timer IDs are rejected.
 
 ### POST /api/admin/round/next-prompt
 
-Only this admin action opens the next prompt round. If the current round is still
-running or paused, it first closes the round and awards its winners. If expiry
-already closed it, the saved result is reused. It then starts Round N+1 on Prompt
-N+1 with a new session. At the last round, it closes bidding without opening
-another prompt. Concurrent stale clicks are rejected.
+If the current prompt is running or paused, Next closes bidding and awards its
+winners. If expiry already closed it, the saved result is reused. It opens the
+next prompt with the same round number and a fresh timer. After the pass ends,
+it starts the next pass if unassigned teams and free slots remain. Otherwise it
+retains the closed snapshot. Concurrent stale clicks are rejected.
 
 The response is the new prompt's snapshot; `completedRound` includes the previous
 round number, prompt ID, winners and summary when another prompt was opened.
 
 ### POST /api/admin/round/end
 
-Closes and awards the current round and waits for the admin to click Next. It does
+Closes and awards the current prompt and waits for the admin to click Next. It does
 not open another prompt. Timer expiry has the same stop-and-wait behavior.
 
 Closed snapshots keep `currentPrompt`, `bids`, `winners`, `summary`, `timerId` and
@@ -252,14 +257,24 @@ round metadata, with zero remaining time. Refresh and restart retain this view.
 
 Reruns a round (defaults to current round, or accepts optional `{ "round": N }` or `{ "roundNumber": N }`).
 All winners of that round have their assignments removed (`assignment: null`), associated judge scores are deleted,
-previous bids for that round are cleared, and a fresh bidding countdown is started for that round's prompt.
+previous bids for that round are cleared, and the pass restarts from the first prompt with a fresh countdown.
 Returns the updated bidding snapshot.
+
+### POST /api/admin/prompt/rerun
+
+Accepts `{ "promptId": 1, "round": 1, "timerId": "..." }`. Round defaults to the
+current round; timerId is optional and rejects stale controls when supplied.
+Only previously opened prompts can be rerun. Close a different live prompt first.
+Clears bids, winner assignments and their scores for just the selected prompt and
+round, then starts a fresh countdown. Other prompt results remain intact. Next
+continues to unfinished prompts. Snapshots include `openedPrompts` entries with
+`roundNumber` and `promptId` so the selector survives refreshes.
 
 ### GET /api/admin/bids?round=N
 
-Lists only the requested prompt round's persisted bids. Omit `round` to return
-all history. Legacy records stored under one bidding pass are labelled by their
-prompt round without deleting or rewriting them.
+Lists persisted bids for every prompt in the requested bidding pass. Omit `round`
+to return all history. Older prompt-based sessions are exposed as the first pass;
+existing storage keys and scores are preserved.
 
 ## Scores & Leaderboard (admin only)
 

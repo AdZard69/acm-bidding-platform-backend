@@ -269,6 +269,9 @@ test('deleting an awarded prompt removes dependent bids, assignments and scores 
   await admin('/scores/1', { judgeScore: 80 });
   await database.assignment.create({ data: { teamId: 2, promptId: 2, bidMinutes: 60, round: 1, multiplier: 1.649 } });
   await admin('/scores/2', { judgeScore: 90 });
+  assert.equal((await admin('/prompts/1', undefined, 'DELETE')).status, 400);
+  await admin('/round/next-prompt', {});
+  await admin('/round/end', {});
   assert.equal((await admin('/prompts/1', undefined, 'DELETE')).status, 200);
   assert.equal(database.tables.bids.length, 0);
   assert.equal(database.tables.assignments.length, 1);
@@ -388,6 +391,25 @@ test('a failed score audit rolls back the score and a failed reset leaves the ac
   database.onQuery = null;
 });
 
+test('admin prompt reruns reopen a previous prompt with a fresh timer and scoped reset', async () => {
+  const first = await start();
+  await bid(45);
+  await admin('/round/end', {});
+  await admin('/scores/1', { judgeScore: 80 });
+  const second = await admin('/round/next-prompt', {});
+  assert.equal((await admin('/prompt/rerun', { promptId: 1, round: 1, timerId: second.body.timerId })).status, 400);
+  await admin('/round/end', {});
+  assert.equal((await admin('/prompt/rerun', { promptId: 1, round: 1, timerId: first.timerId })).status, 409);
+  const result = await admin('/prompt/rerun', { promptId: 1, round: 1 });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.currentPrompt.id, 1);
+  assert.equal(result.body.currentRound, 1);
+  assert.notEqual(result.body.timerId, first.timerId);
+  assert.deepEqual(result.body.resetWinners, [1]);
+  assert.equal(database.tables.scores.length, 0);
+  assert.equal((await bid(42, { timerId: result.body.timerId })).status, 200);
+});
+
 test('every registered route has been exercised successfully through the real HTTP parser and Express middleware', (t) => {
   const missing = inventory.filter((key) => !covered.has(key));
   assert.deepEqual(missing, [], `Missing successful route checks: ${missing.join(', ')}`);
@@ -442,7 +464,7 @@ test('socket bid and admin actions acknowledge database failures with the same s
 });
 
 
-test('HTTP manual progression advances prompts within round 1 and isolates round 2 bids', async (t) => {
+test('HTTP progression keeps the pass number while returning history across its prompts', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const first = await start({ slotsPerPrompt: 1 });
   await bid(40);
@@ -462,6 +484,10 @@ test('HTTP manual progression advances prompts within round 1 and isolates round
   assert.equal(next.body.currentPrompt.id, 2);
   await api('/api/bid/place', { method: 'POST', body: { bidMinutes: 50, round: 1, promptId: 2, timerId: next.body.timerId }, token: secondToken });
   const firstHistory = await api('/api/admin/bids?round=1', { token: adminToken });
+  const secondHistory = await api('/api/admin/bids?round=2', { token: adminToken });
   assert.equal(firstHistory.body.bids.length, 3);
+  assert.equal(secondHistory.body.bids.length, 0);
+  assert.ok(firstHistory.body.bids.every((entry) => entry.round === 1));
+  assert.equal(firstHistory.body.bids.filter((entry) => entry.promptId === 2).length, 1);
   assert.equal((await api('/api/admin/bids?round=bad', { token: adminToken })).status, 400);
 });

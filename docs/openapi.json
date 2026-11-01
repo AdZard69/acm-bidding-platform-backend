@@ -980,6 +980,38 @@
         }
       }
     },
+    "/admin/prompt/rerun": {
+      "post": {
+        "tags": ["Admin · Rounds"],
+        "summary": "Rerun one previously opened prompt in a round",
+        "description": "Resets only this prompt's bids, winner assignments and scores in the selected round, then starts a new timer. Close a different active prompt first. Other prompt results and progression remain intact.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["promptId"],
+                "properties": {
+                  "promptId": { "type": "integer", "minimum": 1 },
+                  "round": { "type": "integer", "minimum": 1 },
+                  "timerId": { "type": "string", "nullable": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Updated shared bidding snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BiddingSnapshot" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "The bidding session has changed" }
+        }
+      }
+    },
     "/admin/scores/{teamId}": {
       "post": {
         "tags": ["Admin · Scores & Leaderboard"],

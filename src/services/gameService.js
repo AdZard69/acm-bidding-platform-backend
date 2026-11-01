@@ -9,6 +9,9 @@ const { withGameLock } = require('./gameLock');
 const { isIntegerInput } = require('../utils/validators');
 const logger = require('../utils/logger');
 const { outsideOperation, runOperation } = require('../utils/operation');
+const {
+  getPromptIds, getRoundDefinitions, publicRound, storageRound, getBidRound, normalizeLegacyConfig
+} = require('./roundService');
 
 const isActive = (config) => [GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status);
 
@@ -18,35 +21,23 @@ const getOrCreateGameConfig = () => {
   configRead = (async () => {
     let config = await prisma.gameConfig.findUnique({ where: { id: 1 } });
     if (!config) config = await prisma.gameConfig.findFirst();
-    if (config) return config;
-    try {
-      return await prisma.gameConfig.create({ data: { id: 1 } });
-    } catch (error) {
-      if (error.code === 'P2002') return prisma.gameConfig.findFirst();
+    if (config?.slotsPerPrompt === 2) {
+      config = await prisma.gameConfig.update({ where: { id: config.id }, data: { slotsPerPrompt: 3 } });
+    }
+    if (config) return normalizeLegacyConfig(config);
+    try { return await prisma.gameConfig.create({ data: { id: 1 } }); }
+    catch (error) {
+      if (error.code === 'P2002') return normalizeLegacyConfig(await prisma.gameConfig.findFirst());
       throw error;
     }
   })().finally(() => { configRead = null; });
   return configRead;
 };
 
-/**
- * Eligible prompts:
- * Round 1: all prompts in display order
- * Round 2: prompts with assignments < slotsPerPrompt
- */
-const getEligiblePromptsForRound = async (roundNumber = 1, slotsPerPrompt = 3) => {
-  if (Number(roundNumber) === 1) {
-    return prisma.prompt.findMany({
-      orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }]
-    });
-  }
-
-  const prompts = await prisma.prompt.findMany({
-    orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }],
-    include: { assignments: true }
-  });
-
-  return prompts.filter((p) => p.assignments.length < slotsPerPrompt);
+// Prompt order is captured for the whole auction; round numbers count passes.
+const getEligiblePromptsForRound = async (round = 1, slotsPerPrompt = 3) => {
+  const prompts = await prisma.prompt.findMany({ orderBy: [{ displayOrder: 'asc' }, { id: 'asc' }], include: { assignments: true } });
+  return Number(round) === 1 ? prompts : prompts.filter((prompt) => prompt.assignments.length < slotsPerPrompt);
 };
 
 const timerCallbacks = (round, adminId = null) => ({
@@ -67,10 +58,10 @@ const timerCallbacks = (round, adminId = null) => ({
   onExpire: (promptId, timerId) => withGameLock(async () => {
     const config = await getOrCreateGameConfig();
     if (config.status !== GAME_STATUS.BIDDING || config.biddingState?.timer?.timerId !== timerId) return;
-    if (!timerManager.hasExpired()) return;
-    try {
-      return await closeCurrentPrompt(config, adminId, 'timer_expired');
-    } catch (error) {
+    if (!timerManager.hasExpired()) return; // An extension can beat the queued expiry callback.
+    // Expiry closes this round. Only an explicit admin action starts another.
+    try { return await closeCurrentRound(config, adminId, 'timer_expired'); }
+    catch (error) {
       if (timerManager.timerId === timerId && !timerManager.isRunning()) timerManager.resetTimer();
       throw error;
     }
@@ -82,27 +73,22 @@ const persistTimer = async (config, promptIds = config.biddingState?.promptIds |
   const saved = await prisma.gameConfig.update({
     where: { id: config.id },
     data: {
-      status: config.status,
-      currentRound: config.currentRound,
+      status: config.status, currentRound: config.currentRound,
       currentPromptIndex: config.currentPromptIndex,
-      biddingState: {
-        ...config.biddingState,
-        flowVersion: 2,
-        promptIds,
-        timer: timerManager.serialize()
-      }
+      biddingState: { ...config.biddingState, flowVersion: 3, bidRound: getBidRound(config), promptIds, timer: timerManager.serialize() }
     }
   });
   activeConfig = saved;
   return saved;
 };
-
 const getActiveGameConfig = () => {
   if (activeConfig?.biddingState?.timer?.timerId && activeConfig.biddingState.timer.timerId === timerManager.timerId)
     return Promise.resolve(activeConfig);
   return getOrCreateGameConfig();
 };
 
+// Called under the game lock. Running countdowns consume downtime; paused ones
+// retain their exact remaining milliseconds. The process then uses monotonic time.
 const ensureTimer = async (config) => {
   if (config.status === GAME_STATUS.ROUND_ENDED && timerManager.getPromptId() === null && config.biddingState?.timer) {
     const saved = config.biddingState.timer;
@@ -112,27 +98,26 @@ const ensureTimer = async (config) => {
   if (!isActive(config) || timerManager.getPromptId() !== null) return config;
   let saved = config.biddingState?.timer;
   if (saved?.pendingStart) {
+    // A crash before activation was checkpointed has no reliable deadline.
+    // Recover frozen, requiring an explicit admin resume instead of inventing time.
     saved = { ...saved, pendingStart: false, isPaused: true };
     config = { ...config, status: GAME_STATUS.PAUSED };
   }
   const prompts = !saved || !config.biddingState?.promptIds
     ? await getEligiblePromptsForRound(config.currentRound, config.slotsPerPrompt) : [];
   if (!saved) {
+    // Older deployments did not save their deadline. Recover safely as paused.
     const prompt = prompts[config.currentPromptIndex];
     if (!prompt) throw new ApiError(409, 'Active bidding state has no prompt. Reset the game to continue.');
     saved = {
-      promptId: prompt.id,
-      durationSeconds: config.bidDurationSeconds,
-      remainingMs: config.bidDurationSeconds * 1000,
-      isPaused: true,
-      savedAt: Date.now(),
-      startTime: Date.now()
+      promptId: prompt.id, durationSeconds: config.bidDurationSeconds,
+      remainingMs: config.bidDurationSeconds * 1000, isPaused: true,
+      savedAt: Date.now(), startTime: Date.now()
     };
     config = { ...config, status: GAME_STATUS.PAUSED };
   }
   timerManager.startTimer({
-    promptId: saved.promptId,
-    restored: saved,
+    promptId: saved.promptId, restored: saved,
     ...timerCallbacks(config.currentRound)
   });
   return persistTimer(config, config.biddingState?.promptIds || prompts.map((p) => p.id));
@@ -142,71 +127,91 @@ const getCurrentPrompt = async (config) => {
   if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED) return null;
   const id = config.biddingState?.timer?.promptId ?? timerManager.getPromptId();
   if (id != null) return prisma.prompt.findUnique({ where: { id } });
-  if (config.currentPromptIndex < 0) return null;
   const prompts = await getEligiblePromptsForRound(config.currentRound, config.slotsPerPrompt);
   return prompts[config.currentPromptIndex] || null;
+};
+
+// Finish the current pass before opening another. Later passes revisit prompts
+// with free slots, and only teams without an assignment remain eligible.
+const getNextStep = async (config) => {
+  const promptIds = await getPromptIds(config);
+  if (!promptIds.length) return null;
+  if (!config.currentRound) return { round: 1, promptIndex: 0 };
+  const opened = new Set(config.biddingState?.openedPrompts || []);
+  const highest = config.biddingState?.highestRound || config.currentRound;
+  const prompts = await prisma.prompt.findMany({ include: { assignments: true } });
+  const available = new Set(prompts.filter((p) => p.assignments.length < config.slotsPerPrompt).map((p) => p.id));
+  for (let round = config.currentRound; round <= highest; round++) {
+    const promptIndex = promptIds.findIndex((id) => !opened.has(`${round}:${id}`) && (round === 1 || available.has(id)));
+    if (promptIndex >= 0) return { round, promptIndex };
+  }
+  const remaining = await prisma.team.count({ where: { isActive: true, assignment: null } });
+  const promptIndex = promptIds.findIndex((id) => available.has(id));
+  return highest < 2 && remaining > 0 && promptIndex >= 0 ? { round: highest + 1, promptIndex } : null;
 };
 
 const buildState = async (config, preparedPrompt) => {
   const currentPrompt = preparedPrompt === undefined ? await getCurrentPrompt(config) : preparedPrompt;
   const bids = currentPrompt ? await prisma.bid.findMany({
-    where: { promptId: currentPrompt.id, round: config.currentRound, team: { isActive: true } },
+    where: { promptId: currentPrompt.id, round: getBidRound(config), team: { isActive: true } },
     include: { team: { select: { teamName: true } } },
     orderBy: [{ bidMinutes: 'asc' }, { submittedAt: 'asc' }]
   }) : [];
   const assignedSlots = currentPrompt ? await prisma.assignment.count({ where: { promptId: currentPrompt.id } }) : 0;
-  const eligiblePrompts = config.currentRound > 0 ? await getEligiblePromptsForRound(config.currentRound, config.slotsPerPrompt) : [];
+  const rounds = await getRoundDefinitions(config);
+  const next = await getNextStep(config);
+  const promptIds = await getPromptIds(config);
+  const unassignedTeams = await prisma.team.count({ where: { isActive: true, assignment: null } });
   const timer = timerManager.getTimeDetails();
   const closed = config.status === GAME_STATUS.ROUND_ENDED;
-  const unassignedTeamsCount = await prisma.team.count({ where: { isActive: true, assignment: null } });
-  const openPromptsForRound2 = await getEligiblePromptsForRound(2, config.slotsPerPrompt);
-  const canStartRound2 = config.currentRound >= 1 && (closed || config.status === GAME_STATUS.WAITING) && unassignedTeamsCount > 0 && openPromptsForRound2.length > 0;
-  const coding = config.biddingState?.coding || null;
-
   return {
     success: true,
     ...timer,
     secondsLeft: timer.secondsRemaining,
     status: config.status,
     codingState: {
-      isStarted: Boolean(coding?.startTime),
-      startTime: coding?.startTime || null,
-      isPaused: Boolean(coding?.isPaused),
-      pausedAt: coding?.pausedAt || null
+      isStarted: Boolean(config.biddingState?.coding?.startTime),
+      startTime: config.biddingState?.coding?.startTime || null,
+      isPaused: Boolean(config.biddingState?.coding?.isPaused),
+      pausedAt: config.biddingState?.coding?.pausedAt || null
     },
+    currentPromptIndex: config.currentPromptIndex,
+    totalPromptsInRound: promptIds.length,
+    unassignedTeamsCount: unassignedTeams,
+    canStartRound2: config.currentRound === 1 && closed && next?.round === 2,
     currentRound: config.currentRound,
     roundNumber: config.currentRound,
     round: config.currentRound,
-    currentPromptIndex: config.currentPromptIndex,
-    promptIndex: config.currentPromptIndex,
     currentPrompt,
     prompt: currentPrompt,
-    totalPrompts: eligiblePrompts.length,
-    totalPromptsInRound: eligiblePrompts.length,
-    hasNextPrompt: config.currentPromptIndex >= 0 && config.currentPromptIndex < eligiblePrompts.length - 1 && unassignedTeamsCount > 0,
-    canStartRound2,
-    unassignedTeamsCount,
+    rounds,
+    totalRounds: rounds.length,
+    openedPrompts: (config.biddingState?.openedPrompts || []).map((key) => {
+      const [roundNumber, promptId] = key.split(':').map(Number);
+      return { roundNumber, promptId };
+    }),
+    promptNumber: currentPrompt ? config.currentPromptIndex + 1 : 0,
+    totalPrompts: promptIds.length,
+    unassignedTeams,
+    passComplete: config.currentRound > 0 && (!next || next.round !== config.currentRound),
+    hasNextPrompt: next !== null,
+    hasNextRound: next !== null && next.round > config.currentRound,
+    nextRoundNumber: next?.round ?? null,
+    nextPromptNumber: next ? next.promptIndex + 1 : null,
     winners: closed ? config.biddingState?.winners || [] : [],
     summary: closed ? config.biddingState?.summary || null : null,
     availableSlots: currentPrompt ? Math.max(0, config.slotsPerPrompt - assignedSlots) : 0,
+    // Do not leak old deadlines or paused flags after ending/resetting.
     ...(!isActive(config) ? {
       timerId: closed ? config.biddingState?.timer?.timerId ?? null : null,
       promptId: closed ? currentPrompt?.id ?? null : null,
-      startTime: closed ? config.biddingState?.timer?.startTime ?? null : null,
-      endsAt: null,
-      remainingMs: 0,
-      secondsRemaining: 0,
-      secondsLeft: 0,
-      elapsedMs: 0,
-      isPaused: false,
-      isRunning: false,
-      hasExpired: true
+      startTime: closed ? config.biddingState?.timer?.startTime ?? null : null, endsAt: null,
+      remainingMs: 0, secondsRemaining: 0, secondsLeft: 0, elapsedMs: 0,
+      isPaused: false, isRunning: false, hasExpired: true
     } : {}),
     config: {
-      baseTime: config.baseTime,
-      minBid: config.minBid,
-      bidDurationSeconds: config.bidDurationSeconds,
-      slotsPerPrompt: config.slotsPerPrompt
+      baseTime: config.baseTime, minBid: config.minBid,
+      bidDurationSeconds: config.bidDurationSeconds, slotsPerPrompt: config.slotsPerPrompt
     },
     bids: bids.map(({ team, ...bid }) => ({ ...bid, round: config.currentRound, teamName: team.teamName }))
   };
@@ -214,6 +219,7 @@ const buildState = async (config, preparedPrompt) => {
 
 let stateRead = null;
 const getCurrentBiddingState = () => {
+  // One database snapshot serves simultaneous admin/team/spectator refreshes.
   if (!stateRead) stateRead = withGameLock(async () =>
     buildState(await ensureTimer(await getOrCreateGameConfig())))
     .finally(() => { stateRead = null; });
@@ -229,6 +235,8 @@ const publishState = async (config) => {
 const logAction = async (adminId, action, details) => {
   try { return await prisma.adminLog.create({ data: { adminId, action, details } }); }
   catch (error) {
+    // The game mutation has committed; do not report it as failed just because
+    // its audit write encountered an outage or the request budget elapsed.
     logger.warn(`Audit log for ${action} could not be saved (${error.code || error.name})`);
     return null;
   }
@@ -237,6 +245,8 @@ const logAction = async (adminId, action, details) => {
 const checkpointActivation = (prepared) => {
   const biddingState = { ...prepared.biddingState, timer: timerManager.serialize() };
   activeConfig = { ...prepared, biddingState };
+  // Save the actual start/deadline without holding up publication or bids. The
+  // JSON compare prevents a late checkpoint overwriting pause/end/reset/rerun.
   void outsideOperation(() => runOperation(async () => {
     await prisma.gameConfig.updateMany({
       where: { id: prepared.id, biddingState: { equals: prepared.biddingState } },
@@ -248,13 +258,13 @@ const checkpointActivation = (prepared) => {
 
 const startPrompt = async (config, prompt, promptIds) => {
   timerManager.startTimer({
-    seconds: config.bidDurationSeconds,
-    promptId: prompt.id,
-    ...timerCallbacks(config.currentRound),
-    prepare: true
+    seconds: config.bidDurationSeconds, promptId: prompt.id,
+    ...timerCallbacks(config.currentRound), prepare: true
   });
   try {
     const prepared = await persistTimer(config, promptIds);
+    // The duration starts AFTER the durable preparation write completes. No
+    // database request or audit write is allowed between activation and broadcast.
     timerManager.activateTimer();
     return checkpointActivation(prepared);
   } catch (err) {
@@ -263,14 +273,14 @@ const startPrompt = async (config, prompt, promptIds) => {
   }
 };
 
-const openPrompt = async (config, prompt, { fromNext = false, resetWinners, totalPrompts = 0 } = {}) => {
+// Prepare all database-backed display data before starting the countdown. Once
+// its timer has been saved, publishing the start must not wait on more reads.
+const openPrompt = async (config, prompt, { fromNext = false, resetWinners } = {}) => {
   const preparedState = await buildState(config, prompt);
-  await startPrompt(config, prompt, config.biddingState?.promptIds || []);
+  await startPrompt(config, prompt, config.biddingState.promptIds);
   const timer = timerManager.getTimeDetails();
   const payload = {
-    ...preparedState,
-    ...timer,
-    secondsLeft: timer.secondsRemaining,
+    ...preparedState, ...timer, secondsLeft: timer.secondsRemaining,
     ...(resetWinners ? { resetWinners } : {})
   };
   for (const teamId of resetWinners || []) {
@@ -280,78 +290,41 @@ const openPrompt = async (config, prompt, { fromNext = false, resetWinners, tota
   broadcast(SOCKET_EVENTS.SERVER.GAME_STATUS, payload);
   broadcast(SOCKET_EVENTS.SERVER.ROUND_STARTED, payload);
   if (fromNext) broadcast(SOCKET_EVENTS.SERVER.PROMPT_NEXT, {
-    ...payload,
-    nextPromptIndex: config.currentPromptIndex,
-    totalPrompts: totalPrompts || payload.totalPromptsInRound
+    ...payload, nextPromptIndex: config.currentPromptIndex, totalPrompts: payload.totalPrompts
   });
   broadcast(SOCKET_EVENTS.SERVER.PROMPT_REVEAL, payload);
   broadcast(SOCKET_EVENTS.SERVER.TIMER_TICK, payload);
   return payload;
 };
 
+const startAtPrompt = async (config, round, promptIndex, adminId = null, fromNext = false) => {
+  const promptIds = await getPromptIds(config);
+  const prompt = await prisma.prompt.findUnique({ where: { id: promptIds[promptIndex] } });
+  if (!prompt) throw new ApiError(409, 'The prompt is missing. Reset bidding before changing the prompt list.');
+  const updated = { ...config, currentRound: round, currentPromptIndex: promptIndex, status: GAME_STATUS.BIDDING,
+    biddingState: { ...config.biddingState, flowVersion: 3, promptIds,
+      bidRound: storageRound(config, round, promptIndex),
+      highestRound: Math.max(round, config.biddingState?.highestRound || 0),
+      openedPrompts: [...new Set([...(config.biddingState?.openedPrompts || []), `${round}:${prompt.id}`])],
+      winners: [], summary: null }
+  };
+  const state = await openPrompt(updated, prompt, { fromNext });
+  void outsideOperation(() => logAction(adminId, 'ROUND_START', `Round ${round} (pass ${round}), prompt ${promptIndex + 1}: ${prompt.id}`));
+  return { ...state, message: `Round ${round} · Prompt ${promptIndex + 1} started`, round, prompt, promptIndex, totalPrompts: promptIds.length };
+};
+
 const startRound = async (roundInput, adminId = null) => {
   const config = await getOrCreateGameConfig();
   if (isActive(config)) throw new ApiError(400, 'Round is already in progress');
-  if (await prisma.team.count({ where: { isActive: true } }) === 0)
+  if (!await prisma.team.count({ where: { isActive: true } }))
     throw new ApiError(400, 'No active teams found. Please create teams before starting a round');
-  if (!await prisma.prompt.count())
-    throw new ApiError(400, 'No prompts found. Please create prompts before starting a round');
-
-  let targetRound;
-  if (roundInput !== undefined && roundInput !== null) {
-    targetRound = Number(roundInput);
-    if (![1, 2].includes(targetRound)) {
-      throw new ApiError(400, 'Round number must be 1 or 2');
-    }
-  } else {
-    if (config.currentRound === 1 && config.status === GAME_STATUS.ROUND_ENDED) {
-      targetRound = 2;
-    } else {
-      targetRound = 1;
-    }
-  }
-
-  if (targetRound === 2) {
-    if (config.currentRound < 1) {
-      throw new ApiError(400, 'Round 1 must be completed before starting Round 2');
-    }
-    const unassignedCount = await prisma.team.count({ where: { isActive: true, assignment: null } });
-    if (unassignedCount === 0) {
-      throw new ApiError(400, 'All teams have already been assigned prompts. Round 2 is not needed');
-    }
-  }
-
-  const eligiblePrompts = await getEligiblePromptsForRound(targetRound, config.slotsPerPrompt);
-  if (eligiblePrompts.length === 0) {
-    if (targetRound === 1) {
-      throw new ApiError(400, 'No prompts found. Please create prompts before starting a round');
-    } else {
-      throw new ApiError(400, 'No prompts have open slots remaining for Round 2');
-    }
-  }
-
-  const firstPrompt = eligiblePrompts[0];
-  const updated = {
-    ...config,
-    currentRound: targetRound,
-    currentPromptIndex: 0,
-    status: GAME_STATUS.BIDDING,
-    biddingState: {
-      flowVersion: 2,
-      promptIds: eligiblePrompts.map((p) => p.id)
-    }
-  };
-
-  const state = await openPrompt(updated, firstPrompt, { totalPrompts: eligiblePrompts.length });
-  void outsideOperation(() => logAction(adminId, 'ROUND_START', `Started round ${targetRound} with prompt "${firstPrompt.title}" (id: ${firstPrompt.id})`));
-  return {
-    ...state,
-    message: `Round ${targetRound} started`,
-    round: targetRound,
-    prompt: firstPrompt,
-    promptIndex: 0,
-    totalPrompts: eligiblePrompts.length
-  };
+  if (!await prisma.prompt.count()) throw new ApiError(400, 'No prompts found. Please create prompts before starting a round');
+  const next = await getNextStep(config);
+  const round = roundInput != null ? Number(roundInput) : next?.round;
+  if (roundInput != null && (!isIntegerInput(roundInput) || ![1, 2].includes(round))) throw new ApiError(400, 'Round number must be 1 or 2');
+  if (!next) throw new ApiError(400, 'Bidding is complete: no unassigned teams or available prompt slots remain');
+  if (round !== next.round) throw new ApiError(400, `Finish every prompt in Round ${config.currentRound || 1} before starting another pass. Next is Round ${next.round}.`);
+  return startAtPrompt(config, round, next.promptIndex, adminId);
 };
 
 const requireActiveTimer = async (status, expectedTimerId, allowExpired = false) => {
@@ -361,7 +334,11 @@ const requireActiveTimer = async (status, expectedTimerId, allowExpired = false)
       : config.status === GAME_STATUS.PAUSED ? 'Round is already paused' : 'Cannot pause: round is not actively bidding';
     throw new ApiError(400, message);
   }
-  if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED) throw new ApiError(400, 'Cannot extend timer: no prompt is currently active');
+  const expiredPrompt = config.status === GAME_STATUS.ROUND_ENDED && allowExpired &&
+    (!config.biddingState?.closedReason || config.biddingState.closedReason === 'timer_expired');
+  if (config.status === GAME_STATUS.ROUND_ENDED && !expiredPrompt)
+    throw new ApiError(400, `Round ${config.currentRound} is complete and cannot be extended. Use Rerun to reopen it.`);
+  if (!isActive(config) && !expiredPrompt) throw new ApiError(400, 'Cannot extend timer: no prompt is currently active');
   if (expectedTimerId && expectedTimerId !== timerManager.timerId)
     throw new ApiError(409, 'The bidding session has changed. Refresh before using timer controls.');
   if (!allowExpired && timerManager.hasExpired() && config.status !== GAME_STATUS.PAUSED)
@@ -369,6 +346,8 @@ const requireActiveTimer = async (status, expectedTimerId, allowExpired = false)
   return config;
 };
 
+// Persist timer and game status together. If saving fails, continue from the
+// previous countdown so all clients still agree with the last published state.
 const changeTimer = async (config, mutate, status = config.status, activateAfterSave = false) => {
   const saved = timerManager.serialize();
   const savedAt = timerManager.now();
@@ -409,12 +388,54 @@ const resumeRound = async (adminId = null, timerId) => {
   return { ...state, round: config.currentRound, message: 'Round resumed' };
 };
 
+// Expiry has already awarded the prompt. Reopening withdraws only those awards,
+// preserves all bids, and saves the new countdown and reset in one transaction.
+const reopenExpiredPrompt = async (config, extraSeconds) => {
+  const saved = timerManager.serialize();
+  const promptId = config.biddingState?.timer?.promptId;
+  if (!promptId) throw new ApiError(400, 'No expired prompt is available to extend');
+  const assignments = await prisma.assignment.findMany({
+    where: { promptId, round: getBidRound(config) }, select: { id: true, teamId: true }
+  });
+  const resetWinners = assignments.map((assignment) => assignment.teamId);
+  timerManager.startTimer({ promptId, prepare: true, ...timerCallbacks(config.currentRound),
+    restored: { ...saved, durationSeconds: saved.durationSeconds + extraSeconds,
+      remainingMs: extraSeconds * 1000, isPaused: true, savedAt: timerManager.wallNow() } });
+  let prepared;
+  try {
+    const results = await prisma.$transaction([
+      prisma.score.deleteMany({ where: { teamId: { in: resetWinners } } }),
+      prisma.assignment.deleteMany({ where: { id: { in: assignments.map((assignment) => assignment.id) } } }),
+      prisma.gameConfig.update({ where: { id: config.id }, data: {
+        status: GAME_STATUS.BIDDING, currentRound: config.currentRound, currentPromptIndex: config.currentPromptIndex,
+        biddingState: { ...config.biddingState, winners: [], summary: null, closedReason: null, timer: timerManager.serialize() }
+      } })
+    ]);
+    prepared = results[2];
+  } catch (error) {
+    timerManager.startTimer({ promptId, restored: { ...saved, remainingMs: 0, isPaused: true }, ...timerCallbacks(config.currentRound) });
+    timerManager.stopTimer();
+    throw error;
+  }
+  timerManager.activateTimer({ resetStartTime: false });
+  const updated = checkpointActivation(prepared);
+  for (const teamId of resetWinners) {
+    sendToTeam(teamId, SOCKET_EVENTS.SERVER.ASSIGNMENT_RECEIVED, null);
+    sendToTeam(teamId, 'assignment:cleared', { round: config.currentRound });
+  }
+  broadcast('leaderboard:update', {});
+  broadcast('config:updated', {});
+  return updated;
+};
+
 const extendRound = async (extraSeconds, adminId = null, timerId) => {
   let config = await requireActiveTimer(undefined, timerId, true);
   const extra = Number(extraSeconds);
   if (!isIntegerInput(extraSeconds) || extra <= 0) throw new ApiError(400, 'extraSeconds must be a positive integer');
   const targetStatus = config.status === GAME_STATUS.PAUSED ? GAME_STATUS.PAUSED : GAME_STATUS.BIDDING;
-  config = await changeTimer(config, () => timerManager.extendTimer(extra), targetStatus);
+  config = config.status === GAME_STATUS.ROUND_ENDED
+    ? await reopenExpiredPrompt(config, extra)
+    : await changeTimer(config, () => timerManager.extendTimer(extra), targetStatus);
   const newSecondsLeft = timerManager.getSecondsRemaining();
   const payload = {
     ...timerManager.getTimeDetails(),
@@ -453,7 +474,7 @@ const awardCurrentPrompt = async (config) => {
   return winners;
 };
 
-const closeCurrentPrompt = async (config, adminId = null, reason = 'manual_end') => {
+const closeCurrentRound = async (config, adminId = null, reason = 'manual_end') => {
   if (config.status === GAME_STATUS.ROUND_ENDED) {
     return { ...await buildState(config), message: `Round ${config.currentRound} is complete`, round: config.currentRound };
   }
@@ -461,107 +482,58 @@ const closeCurrentPrompt = async (config, adminId = null, reason = 'manual_end')
   await awardCurrentPrompt(config);
   const prompt = await getCurrentPrompt(config);
   const assigned = prompt ? await prisma.assignment.findMany({
-    where: { promptId: prompt.id }, include: { team: { select: { teamName: true } } }, orderBy: { bidMinutes: 'asc' }
+    where: { promptId: prompt.id, round: getBidRound(config) }, include: { team: { select: { teamName: true } } }, orderBy: { bidMinutes: 'asc' }
   }) : [];
-  const winners = assigned.map((assignment) => ({
-    teamId: assignment.teamId,
-    teamName: assignment.team.teamName,
-    bidMinutes: assignment.bidMinutes,
-    multiplier: Number(assignment.multiplier)
-  }));
-
-  const eligiblePrompts = await getEligiblePromptsForRound(config.currentRound, config.slotsPerPrompt);
-  const unassignedTeams = await prisma.team.findMany({ where: { isActive: true, assignment: null } });
-  const isLastPromptInRound = config.currentPromptIndex >= eligiblePrompts.length - 1 || unassignedTeams.length === 0;
-
-  let autoAssigned = null;
-  if (reason !== 'manual_end' && isLastPromptInRound && unassignedTeams.length === 1) {
-    autoAssigned = await bidEngine.autoAssignRemainingTeam(unassignedTeams[0].id, config);
-  }
-
+  const winners = assigned.map((assignment) => ({ teamId: assignment.teamId, teamName: assignment.team.teamName,
+    bidMinutes: assignment.bidMinutes, multiplier: Number(assignment.multiplier) }));
   const summary = {
-    round: config.currentRound,
-    assignedTeams: await prisma.assignment.count(),
+    round: config.currentRound, assignedTeams: await prisma.assignment.count(),
     unassignedTeams: await prisma.team.count({ where: { isActive: true, assignment: null } }),
-    ...(autoAssigned ? { autoAssigned } : {})
   };
-
-  const updated = await persistTimer({
-    ...config,
-    status: GAME_STATUS.ROUND_ENDED,
-    biddingState: { ...config.biddingState, winners, summary }
+  const updated = await persistTimer({ ...config, status: GAME_STATUS.ROUND_ENDED,
+    biddingState: { ...config.biddingState, winners, summary, closedReason: reason }
   });
-
   broadcast(SOCKET_EVENTS.SERVER.ROUND_ENDED, { roundNumber: config.currentRound, timerId: timerManager.timerId, summary });
   const state = await publishState(updated);
   broadcast('leaderboard:update', {});
-  await logAction(adminId, 'ROUND_END', `Round ${config.currentRound} prompt ${prompt?.id || ''} closed [${reason}]; waiting for admin`);
-  return { ...state, message: `Round ${config.currentRound} prompt closed.`, round: config.currentRound, winners, summary };
+  await logAction(adminId, 'ROUND_END', `Round ${config.currentRound} closed [${reason}]; waiting for admin`);
+  return { ...state, message: `Round ${config.currentRound} · Prompt ${config.currentPromptIndex + 1} complete. Waiting for the admin.`, round: config.currentRound, winners, summary };
 };
 
-const advanceToNextPromptOrEnd = async (adminId = null, reason = 'force_skip', timerId = timerManager.timerId) => {
+const advance = async (adminId = null, expectedTimerId) => {
   let config = await ensureTimer(await getOrCreateGameConfig());
   if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED)
     throw new ApiError(400, 'Cannot advance prompt: no round in progress');
   const session = config.biddingState?.timer?.timerId;
-  if (timerId && session && timerId !== session)
+  if (expectedTimerId && expectedTimerId !== session)
     throw new ApiError(409, 'The active prompt has already changed. Refresh before advancing.');
-
-  // If currently active, close/award current prompt first
-  let winners = [];
-  if (isActive(config)) {
-    const closed = await closeCurrentPrompt(config, adminId, reason);
-    winners = closed.winners || [];
-    config = await getOrCreateGameConfig();
-  }
-
-  const eligiblePrompts = await getEligiblePromptsForRound(config.currentRound, config.slotsPerPrompt);
-  const unassignedTeams = await prisma.team.findMany({ where: { isActive: true, assignment: null } });
-  const nextIndex = config.currentPromptIndex + 1;
-
-  if (unassignedTeams.length > 0 && nextIndex < eligiblePrompts.length) {
-    const nextPromptObj = eligiblePrompts[nextIndex];
-    const updated = {
-      ...config,
-      currentPromptIndex: nextIndex,
-      status: GAME_STATUS.BIDDING,
-      biddingState: {
-        ...config.biddingState,
-        promptIds: eligiblePrompts.map((p) => p.id)
-      }
-    };
-
-    const state = await openPrompt(updated, nextPromptObj, { fromNext: true, totalPrompts: eligiblePrompts.length });
-    void outsideOperation(() => logAction(adminId, 'NEXT_PROMPT', `Advanced to prompt "${nextPromptObj.title}" (index ${nextIndex}) in round ${config.currentRound} [${reason}]`));
-    return {
-      ...state,
-      message: 'Advanced to next prompt',
-      round: config.currentRound,
-      prompt: nextPromptObj,
-      promptIndex: nextIndex,
-      totalPrompts: eligiblePrompts.length,
-      winners
-    };
-  } else {
-    // Round ends - no more prompts in this round!
-    return {
-      ...await buildState(config),
-      message: 'Round ended - no more prompts',
-      round: config.currentRound,
-      status: GAME_STATUS.ROUND_ENDED,
-      winners,
-      summary: config.biddingState?.summary || null
-    };
-  }
+  const completed = isActive(config) ? await closeCurrentRound(config, adminId, 'manual_next') : await buildState(config);
+  if (isActive(config)) config = await getOrCreateGameConfig();
+  const nextStep = await getNextStep(config);
+  if (!nextStep) return {
+    ...await buildState(config), message: 'Bidding complete. No further passes are available.', round: config.currentRound
+  };
+  const next = await startAtPrompt(config, nextStep.round, nextStep.promptIndex, adminId, true);
+  return { ...next, completedRound: { round: config.currentRound, promptId: completed.currentPrompt?.id,
+    winners: completed.winners, summary: completed.summary } };
 };
+
+const advanceToNextPromptOrEnd = (adminId, reason, timerId = timerManager.timerId) =>
+  withGameLock(async () => {
+    if (reason === 'timer_expired') {
+      const config = await getOrCreateGameConfig();
+      if (config.status === GAME_STATUS.BIDDING && (!timerId || config.biddingState?.timer?.timerId === timerId))
+        return closeCurrentRound(config, adminId, reason);
+      return;
+    }
+    return advance(adminId, timerId);
+  });
 
 const endRound = async (adminId = null, timerId) => {
   const config = await ensureTimer(await getOrCreateGameConfig());
-  if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED)
-    throw new ApiError(400, 'No round is currently in progress');
-  if (timerId && timerId !== config.biddingState?.timer?.timerId)
-    throw new ApiError(409, 'The active prompt has changed. Refresh before ending.');
-  return closeCurrentPrompt(config, adminId, 'manual_end');
+  if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED) throw new ApiError(400, 'No round is currently in progress');
+  if (timerId && timerId !== config.biddingState?.timer?.timerId) throw new ApiError(409, 'The active prompt has changed. Refresh before ending.');
+  return closeCurrentRound(config, adminId);
 };
 
 const rerunRound = async (roundInput, adminId = null) => {
@@ -574,50 +546,42 @@ const rerunRound = async (roundInput, adminId = null) => {
   }
 
   const targetRound = roundInput != null ? Number(roundInput) : (config.currentRound || 1);
-  if (![1, 2].includes(targetRound)) {
-    throw new ApiError(400, 'Round number must be 1 or 2');
-  }
 
+  if (!isIntegerInput(roundInput ?? targetRound) || targetRound < 1) {
+    throw new ApiError(400, 'Round number must be a positive integer');
+  }
+  if (targetRound > (config.biddingState?.highestRound || config.currentRound)) {
+    throw new ApiError(400, 'Only a previously started pass can be rerun');
+  }
   if (isActive(config) && targetRound !== config.currentRound) {
     throw new ApiError(400, `Round ${config.currentRound} is still in progress. End it before rerunning Round ${targetRound}.`);
   }
-
-  const roundAssignments = await prisma.assignment.findMany({
-    where: { round: targetRound },
-    select: { id: true, teamId: true }
-  });
+  const promptIds = await getPromptIds(config);
+  const prompt = await prisma.prompt.findUnique({ where: { id: promptIds[0] } });
+  if (!prompt) throw new ApiError(409, 'The first prompt is missing. Reset bidding before rerunning the pass.');
+  const allAssignments = await prisma.assignment.findMany({ select: { id: true, teamId: true, promptId: true, round: true } });
+  const roundAssignments = allAssignments.filter((assignment) => publicRound(assignment, config).round === targetRound);
   const winnerTeamIds = roundAssignments.map((assignment) => assignment.teamId);
-
+  const allBids = await prisma.bid.findMany();
+  const bidIds = allBids.filter((bid) => publicRound(bid, config).round === targetRound).map((bid) => bid.id);
   await prisma.$transaction([
     prisma.score.deleteMany({ where: { teamId: { in: winnerTeamIds } } }),
-    prisma.assignment.deleteMany({ where: { round: targetRound } }),
-    prisma.bid.deleteMany({ where: { round: targetRound } })
+    prisma.assignment.deleteMany({ where: { id: { in: roundAssignments.map((assignment) => assignment.id) } } }),
+    prisma.bid.deleteMany({ where: { id: { in: bidIds } } })
   ]);
-
-  const eligiblePrompts = await getEligiblePromptsForRound(targetRound, config.slotsPerPrompt);
-  if (eligiblePrompts.length === 0) {
-    throw new ApiError(400, `No eligible prompts found for Round ${targetRound}`);
-  }
-
-  const firstPrompt = eligiblePrompts[0];
   const updated = {
-    ...config,
-    currentRound: targetRound,
-    currentPromptIndex: 0,
-    status: GAME_STATUS.BIDDING,
-    biddingState: {
-      flowVersion: 2,
-      promptIds: eligiblePrompts.map((p) => p.id),
-      winners: [],
-      summary: null
-    }
+    ...config, currentRound: targetRound, currentPromptIndex: 0, status: GAME_STATUS.BIDDING,
+    biddingState: { ...config.biddingState, flowVersion: 3,
+      bidRound: storageRound(config, targetRound, 0), promptIds,
+      openedPrompts: [...(config.biddingState?.openedPrompts || []).filter((key) => !key.startsWith(`${targetRound}:`)), `${targetRound}:${prompt.id}`],
+      winners: [], summary: null }
   };
 
-  const syncPayload = await openPrompt(updated, firstPrompt, { resetWinners: winnerTeamIds, totalPrompts: eligiblePrompts.length });
+  const syncPayload = await openPrompt(updated, prompt, { resetWinners: winnerTeamIds });
   broadcast('leaderboard:update', {});
   broadcast('config:updated', {});
 
-  void outsideOperation(() => logAction(adminId, 'ROUND_RERUN', `Reran Round ${targetRound}: prompt ${firstPrompt.id}. Reset ${winnerTeamIds.length} winner assignment(s).`));
+  void outsideOperation(() => logAction(adminId, 'ROUND_RERUN', `Reran Round ${targetRound}: prompt ${prompt.id}. Reset ${winnerTeamIds.length} winner assignment(s).`));
 
   return {
     ...syncPayload,
@@ -626,20 +590,56 @@ const rerunRound = async (roundInput, adminId = null) => {
   };
 };
 
+// A prompt rerun resets just one prompt in one pass. Other prompt results and
+// the opened-prompt history stay intact, so Next resumes unfinished bidding.
+const rerunPrompt = async (promptInput, roundInput, adminId = null, expectedTimerId) => {
+  const config = await ensureTimer(await getOrCreateGameConfig());
+  const promptId = Number(promptInput);
+  const round = roundInput == null ? config.currentRound : Number(roundInput);
+  if (!isIntegerInput(promptInput) || promptId < 1) throw new ApiError(400, 'promptId must be a positive integer');
+  if (!isIntegerInput(roundInput ?? round) || round < 1) throw new ApiError(400, 'Round number must be a positive integer');
+  if (expectedTimerId && expectedTimerId !== config.biddingState?.timer?.timerId)
+    throw new ApiError(409, 'The bidding session has changed. Refresh before rerunning a prompt.');
+  const promptIds = await getPromptIds(config);
+  const promptIndex = promptIds.indexOf(promptId);
+  if (promptIndex < 0) throw new ApiError(404, 'Prompt not found in the auction');
+  if (!config.biddingState?.openedPrompts?.includes(`${round}:${promptId}`))
+    throw new ApiError(400, 'Only a previously opened prompt can be rerun');
+  if (isActive(config) && (config.currentRound !== round || config.currentPromptIndex !== promptIndex))
+    throw new ApiError(400, 'Close the current prompt before rerunning a previous prompt');
+  if (!await prisma.team.count({ where: { isActive: true } })) throw new ApiError(400, 'No active teams found');
+  const prompt = await prisma.prompt.findUnique({ where: { id: promptId } });
+  if (!prompt) throw new ApiError(404, 'Prompt not found');
+  const assignments = (await prisma.assignment.findMany({ where: { promptId }, select: { id: true, teamId: true, round: true } }))
+    .filter((assignment) => publicRound(assignment, config).round === round);
+  const resetWinners = assignments.map((assignment) => assignment.teamId);
+  const bidIds = (await prisma.bid.findMany({ where: { promptId } }))
+    .filter((bid) => publicRound(bid, config).round === round).map((bid) => bid.id);
+  await prisma.$transaction([
+    prisma.score.deleteMany({ where: { teamId: { in: resetWinners } } }),
+    prisma.assignment.deleteMany({ where: { id: { in: assignments.map((assignment) => assignment.id) } } }),
+    prisma.bid.deleteMany({ where: { id: { in: bidIds } } })
+  ]);
+  const updated = { ...config, currentRound: round, currentPromptIndex: promptIndex, status: GAME_STATUS.BIDDING,
+    biddingState: { ...config.biddingState, bidRound: storageRound(config, round, promptIndex), winners: [], summary: null } };
+  const state = await openPrompt(updated, prompt, { resetWinners });
+  broadcast('leaderboard:update', {});
+  broadcast('config:updated', {});
+  void outsideOperation(() => logAction(adminId, 'PROMPT_RERUN', `Reran prompt ${promptId} in Round ${round}. Reset ${resetWinners.length} winner assignment(s).`));
+  return { ...state, message: `Round ${round} · Prompt ${promptIndex + 1} rerun started`, resetWinners };
+};
+
 module.exports = {
-  getOrCreateGameConfig,
-  getActiveGameConfig,
-  getEligiblePromptsForRound,
-  getCurrentPrompt,
-  getCurrentBiddingState,
-  ensureTimer,
-  publishState,
+  getOrCreateGameConfig, getActiveGameConfig, getEligiblePromptsForRound, getCurrentPrompt,
+  getCurrentBiddingState, ensureTimer, publishState,
+  isPromptOrderLocked: async (config) => config.currentRound > 0 && (isActive(config) || await getNextStep(config) !== null),
   startRound: (...args) => withGameLock(() => startRound(...args)),
   pauseRound: (...args) => withGameLock(() => pauseRound(...args)),
   resumeRound: (...args) => withGameLock(() => resumeRound(...args)),
   extendRound: (...args) => withGameLock(() => extendRound(...args)),
-  nextPrompt: (adminId, timerId = timerManager.timerId) => withGameLock(() => advanceToNextPromptOrEnd(adminId, 'force_skip', timerId)),
+  nextPrompt: (adminId, timerId = timerManager.timerId) => advanceToNextPromptOrEnd(adminId, 'force_skip', timerId),
   endRound: (adminId, timerId = timerManager.timerId) => withGameLock(() => endRound(adminId, timerId)),
   rerunRound: (...args) => withGameLock(() => rerunRound(...args)),
-  advanceToNextPromptOrEnd: (...args) => withGameLock(() => advanceToNextPromptOrEnd(...args))
+  rerunPrompt: (...args) => withGameLock(() => rerunPrompt(...args)),
+  advanceToNextPromptOrEnd
 };

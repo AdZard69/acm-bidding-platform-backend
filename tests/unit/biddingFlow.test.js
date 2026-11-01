@@ -116,26 +116,27 @@ test('paused, inactive, assigned and mismatched-session bids are rejected on bot
   assert.ok(started.timerId);
 });
 
-test('manually progressing prompts within round 1 preserves round 1 identity and multiplier curve', async () => {
+test('all prompts in the first pass share Round 1; the next pass starts only after all prompts', async () => {
   await setup(4, 3);
   let state = await game.startRound(1);
-  for (let promptIdx = 1; promptIdx <= 3; promptIdx++) {
+  for (let prompt = 1; prompt <= 3; prompt++) {
     assert.equal(state.currentRound, 1);
-    assert.equal(state.currentPrompt.id, promptIdx);
-    await submitBid(promptIdx, { bidMinutes: 45, promptId: promptIdx, round: 1, timerId: state.timerId });
+    assert.equal(state.promptNumber, prompt);
+    assert.equal(state.totalPrompts, 3);
+    assert.equal(state.currentPrompt.id, prompt);
+    await submitBid(prompt, { bidMinutes: 45, promptId: prompt, round: 1, timerId: state.timerId });
     assert.equal(database.tables.bids.at(-1).round, 1);
     state = await game.nextPrompt();
-    if (promptIdx < 3) {
-      assert.equal(state.currentRound, 1);
-      assert.equal(state.currentPrompt.id, promptIdx + 1);
-      assert.deepEqual(state.bids, []);
-    }
   }
   assert.equal(state.status, 'round_ended');
   assert.equal(state.currentPrompt.id, 3);
+  assert.equal(state.passComplete, true);
+  assert.equal(state.hasNextPrompt, false); // All slots are full, one team remains.
+  assert.equal(state.unassignedTeams, 1);
   assert.equal(database.tables.assignments.length, 3);
   assert.ok(database.tables.assignments.every((assignment) => assignment.round === 1 && Number(assignment.multiplier) === 1.868));
 });
+
 
 test('queued duplicate next-prompt commands cannot skip two prompts', async () => {
   await setup();
@@ -176,13 +177,15 @@ test('assignment and score refresh returns numeric values and reset clears all v
   await game.startRound(1);
   await submitBid(1, { bidMinutes: 45 });
   await game.nextPrompt();
-  const autoAssignment = events.find((event) => event.room === 'team:2' && event.event === 'assignment:received');
-  assert.equal(autoAssignment.data.round, 1);
+  const state = await game.getCurrentBiddingState();
+  assert.equal(state.currentRound, 2);
+  assert.equal(state.unassignedTeams, 1);
+  assert.equal((await invoke(controller.getMyAssignment, { auth: { teamId: 2 } })).assignment, null);
   await database.score.create({ data: { teamId: 1, judgeScore: 80, multiplier: '1.5', finalScore: '120' } });
   const personal = await invoke(controller.getMyAssignment, { auth: { teamId: 1 } });
   assert.equal(typeof personal.assignment.multiplier, 'number');
   assert.equal(personal.score.finalScore, 120);
-  const ended = await game.getCurrentBiddingState();
+  const ended = await game.endRound();
   assert.equal(ended.currentPrompt.id, 1);
   assert.equal(ended.endsAt, null);
   assert.equal(ended.secondsRemaining, 0);
@@ -235,6 +238,7 @@ test('expiry closes the round and retains its prompt and bids until an admin cli
   const next = await game.nextPrompt(null, initial.timerId);
   assert.equal(next.currentPrompt.id, 2);
   assert.equal(next.currentRound, 1);
+  assert.equal(next.promptNumber, 2);
   assert.notEqual(next.timerId, initial.timerId);
   assert.equal(next.secondsRemaining, 60);
   assert.equal(database.tables.assignments.length, 1);
@@ -279,36 +283,51 @@ test('a failed timer save keeps status and countdown at the last published state
 });
 
 
-test('admin bid history filters bids by round (1 or 2)', async () => {
+test('bid history keeps different prompts in their actual bidding pass', async () => {
   await setup();
   await database.bid.create({ data: { teamId: 1, promptId: 1, round: 1, bidMinutes: 40 } });
   await database.bid.create({ data: { teamId: 2, promptId: 2, round: 1, bidMinutes: 45 } });
-  await database.bid.create({ data: { teamId: 3, promptId: 1, round: 2, bidMinutes: 50 } });
-  const allBids = await invoke(adminController.listBids);
-  assert.equal(allBids.bids.length, 3);
-  const round1 = await invoke(adminController.listBids, { query: { round: '1' } });
-  assert.equal(round1.bids.length, 2);
-  const round2 = await invoke(adminController.listBids, { query: { round: '2' } });
-  assert.equal(round2.bids.length, 1);
-  assert.equal(round2.bids[0].promptId, 1);
-  assert.equal(round2.bids[0].round, 2);
+  await database.bid.create({ data: { teamId: 3, promptId: 3, round: 2, bidMinutes: 50 } });
+  const history = await invoke(adminController.listBids);
+  assert.deepEqual(history.bids.map((bid) => bid.round), [1, 1, 2]);
+  const second = await invoke(adminController.listBids, { query: { round: '2' } });
+  assert.equal(second.bids.length, 1);
+  assert.equal(second.bids[0].promptId, 3);
+  assert.deepEqual(database.tables.bids.map((bid) => bid.round), [1, 1, 2]);
 });
 
-test('round 2 requires round 1 to have been completed and unassigned teams to exist', async () => {
-  await setup(2, 3);
-  // Starting round 2 before round 1 throws 400
-  await assert.rejects(game.startRound(2), /Round 1 must be completed/);
 
-  // Complete round 1 with 1 winner
-  const round1 = await game.startRound(1);
-  await submitBid(1, { bidMinutes: 45, promptId: 1, round: 1, timerId: round1.timerId });
+test('an active legacy pass keeps its bids, timer identity and pass number', async () => {
+  await setup();
+  await database.gameConfig.create({ data: { id: 1, currentRound: 1, currentPromptIndex: 1, status: 'bidding', biddingState: {
+    promptIds: [1, 2, 3], timer: { promptId: 2, timerId: 'legacy-session', startTime: Date.now(), savedAt: Date.now(),
+      durationSeconds: 60, remainingMs: 60000, isPaused: false }
+  } } });
+  await database.bid.create({ data: { teamId: 1, promptId: 2, round: 1, bidMinutes: 45 } });
+  const current = await game.getCurrentBiddingState();
+  assert.equal(current.currentRound, 1);
+  assert.equal(current.bids[0].round, 1);
+  await submitBid(1, { bidMinutes: 40, promptId: 2, round: 1, timerId: 'legacy-session' });
+  assert.equal(database.tables.bids.length, 1);
+  assert.equal(database.tables.bids[0].round, 1);
+  const next = await game.nextPrompt();
+  assert.equal(next.currentRound, 1);
+  assert.equal(next.currentPrompt.id, 3);
+  const assigned = await invoke(controller.getMyAssignment, { auth: { teamId: 1 } });
+  assert.equal(assigned.assignment.round, 1);
+});
+
+test('admins cannot skip prompts or start a second pass before completing the first', async () => {
+  await setup();
+  await assert.rejects(game.startRound(2), /Finish every prompt/);
+  await game.startRound(1);
   await game.endRound();
-
-  // Round 2 can now be started since team 2 is unassigned
-  const round2 = await game.startRound(2);
-  assert.equal(round2.currentRound, 2);
-  assert.equal(round2.status, 'bidding');
+  await assert.rejects(game.startRound(2), /Finish every prompt/);
+  const secondPrompt = await game.startRound(1);
+  assert.equal(secondPrompt.currentRound, 1);
+  assert.equal(secondPrompt.currentPrompt.id, 2);
 });
+
 
 test('rerunning a round assigns null to all winners of that round, clears their bids/scores, and restarts bidding', async () => {
   await setup(3, 3);
@@ -564,8 +583,8 @@ test('server expiry outlives the start request and rejects client-supplied extra
   } finally { timer.resetTimer(); timer.now = originalNow; }
 });
 
-test('rerunning round 1 resets all round 1 winners and their scores', async () => {
-  await setup(3, 3);
+test('rerunning a pass clears its bids and winners across all prompts and preserves other passes', async () => {
+  await setup();
   await game.startRound(1);
   await game.endRound();
   for (const id of [1, 2]) {
@@ -573,15 +592,16 @@ test('rerunning round 1 resets all round 1 winners and their scores', async () =
     await database.assignment.create({ data: { teamId: id, promptId: id, round: 1, bidMinutes: 40 + id, multiplier: 1.5 } });
     await database.score.create({ data: { teamId: id, judgeScore: 80, multiplier: 1.5, finalScore: 120 } });
   }
+  await database.bid.create({ data: { teamId: 3, promptId: 1, round: 2, bidMinutes: 50 } });
   const state = await game.rerunRound(1);
-  assert.deepEqual(state.resetWinners.sort(), [1, 2]);
-  for (const table of ['bids', 'assignments', 'scores']) {
-    assert.equal(database.tables[table].length, 0);
-  }
-  const cleared = events.findLast((event) => event.event === 'assignment:received' && event.room === 'team:1');
-  assert.equal(cleared.data, null);
+  assert.deepEqual(state.resetWinners, [1, 2]);
+  assert.equal(database.tables.assignments.length, 0);
+  assert.equal(database.tables.scores.length, 0);
+  assert.equal(database.tables.bids.length, 1);
+  assert.equal(database.tables.bids[0].round, 2);
   await submitBid(1, { bidMinutes: 45, timerId: state.timerId });
 });
+
 
 test('a rerun reset failure rolls back deleted data and keeps the current countdown', async () => {
   await setup();
@@ -606,6 +626,10 @@ test('rerunning round 2 resets only round 2 winners and preserves round 1 winner
   await submitBid(2, { bidMinutes: 50, promptId: 1, round: 1, timerId: round1.timerId });
   const ended1 = await game.endRound();
   assert.equal(ended1.winners[0].teamId, 1);
+
+  await game.nextPrompt(); // Round 1, prompt 2: no bids.
+  await game.nextPrompt(); // Round 1, prompt 3: no bids.
+  await game.endRound();
 
   // Round 2
   const round2 = await game.startRound(2);
@@ -653,13 +677,303 @@ test('rerunning round 2 resets only round 2 winners and preserves round 1 winner
   assert.equal(database.tables.bids.length, 2);
   assert.ok(database.tables.bids.every((b) => b.round === 1));
 
+  await game.nextPrompt(); // Skip filled prompt 1; return to prompt 2.
+  const reopened = await game.getCurrentBiddingState();
   // Team 2 can now bid in rerun round 2
-  await submitBid(2, { bidMinutes: 42, promptId: 2, round: 2, timerId: rerun.timerId });
+  await submitBid(2, { bidMinutes: 42, promptId: 2, round: 2, timerId: reopened.timerId });
   assert.equal(database.tables.bids.length, 3);
 
   // Team 1 still cannot bid because they won round 1
   await assert.rejects(
-    submitBid(1, { bidMinutes: 35, promptId: 2, round: 2, timerId: rerun.timerId }),
+    submitBid(1, { bidMinutes: 35, promptId: 2, round: 2, timerId: reopened.timerId }),
     /already has an assigned prompt/
   );
+});
+
+test('a closed round cannot be extended back into bidding', async () => {
+  await setup();
+  await game.startRound(1);
+  await submitBid(1, { bidMinutes: 45 });
+  await game.endRound();
+  await assert.rejects(game.extendRound(30), /complete and cannot be extended/);
+  const state = await game.getCurrentBiddingState();
+  assert.equal(state.status, 'round_ended');
+  assert.equal(state.isRunning, false);
+  assert.equal(database.tables.assignments.length, 1);
+});
+
+test('rerunning a different pass while one is live leaves the live timer and bids untouched', async () => {
+  await setup(3, 1);
+  await game.startRound(1);
+  await game.nextPrompt(); // No bids: begin Round 2 on the same prompt.
+  await submitBid(2, { bidMinutes: 50 });
+  const live = await game.getCurrentBiddingState();
+  assert.equal(live.currentRound, 2);
+  await assert.rejects(game.rerunRound(1), /Round 2 is still in progress/);
+  const after = await game.getCurrentBiddingState();
+  assert.equal(after.timerId, live.timerId);
+  assert.equal(after.bids.length, 1);
+  const restarted = await game.rerunRound(2);
+  assert.equal(restarted.currentRound, 2);
+  assert.notEqual(restarted.timerId, live.timerId);
+});
+
+
+test('later passes revisit only open prompts and keep previous-pass bids and assignments separate', async () => {
+  await setup(3, 2);
+  await game.startRound(1);
+  await submitBid(1, { bidMinutes: 40 });
+  await submitBid(2, { bidMinutes: 50 });
+  await game.nextPrompt();
+  await submitBid(2, { bidMinutes: 60 });
+  await database.gameConfig.update({ where: { id: 1 }, data: { slotsPerPrompt: 2 } });
+  const closed = await game.endRound();
+  assert.equal(closed.passComplete, true);
+  assert.equal(closed.unassignedTeams, 1);
+  assert.equal(closed.nextRoundNumber, 2);
+  const next = await game.nextPrompt();
+  assert.equal(next.currentRound, 2);
+  assert.equal(next.currentPrompt.id, 1);
+  assert.deepEqual(next.bids, []);
+  await submitBid(3, { bidMinutes: 50, promptId: 1, round: 2, timerId: next.timerId });
+  await assert.rejects(submitBid(1, { bidMinutes: 35 }), /already has an assigned prompt/);
+  const done = await game.endRound();
+  assert.equal(done.unassignedTeams, 0);
+  // Another prompt still belongs to this pass, then bidding has no further pass.
+  await game.nextPrompt();
+  const final = await game.endRound();
+  assert.equal(final.hasNextPrompt, false);
+  assert.equal(final.passComplete, true);
+  assert.equal(database.tables.bids.filter((bid) => bid.promptId === 1 && bid.bidMinutes === 50).length, 2);
+  const history = await invoke(adminController.listBids, { query: { round: '2' } });
+  assert.equal(history.bids.length, 1);
+  assert.equal(history.bids[0].teamId, 3);
+});
+
+
+
+test('prompt-based version 2 sessions retain storage keys while future passes use separate bids', async () => {
+  await setup(3, 2);
+  await database.gameConfig.create({ data: { id: 1, currentRound: 2, currentPromptIndex: 1, status: 'bidding', biddingState: {
+    flowVersion: 2, bidRound: 2, promptIds: [1, 2], openedRounds: [1, 2],
+    timer: { promptId: 2, timerId: 'prompt-based-session', startTime: Date.now(), savedAt: Date.now(),
+      durationSeconds: 60, remainingMs: 60000, isPaused: false }
+  } } });
+  await database.bid.create({ data: { teamId: 3, promptId: 1, round: 1, bidMinutes: 50 } });
+  await database.bid.create({ data: { teamId: 2, promptId: 2, round: 2, bidMinutes: 45 } });
+  const restored = await game.getCurrentBiddingState();
+  assert.equal(restored.currentRound, 1);
+  assert.equal(restored.promptNumber, 2);
+  assert.equal(restored.timerId, 'prompt-based-session');
+  assert.equal(restored.bids[0].round, 1);
+  const closed = await game.endRound();
+  assert.equal(closed.passComplete, true);
+  const next = await game.nextPrompt();
+  assert.equal(next.currentRound, 2);
+  assert.equal(next.currentPrompt.id, 1);
+  assert.deepEqual(next.bids, []);
+  await submitBid(3, { bidMinutes: 50, promptId: 1, round: 2, timerId: next.timerId });
+  assert.equal(database.tables.bids.at(-1).round, 3);
+  const history = await invoke(controller.getMyBids, { auth: { teamId: 3 } });
+  assert.deepEqual(history.bids.map((bid) => bid.round).sort(), [1, 2]);
+  await game.endRound();
+  const assignment = await invoke(controller.getMyAssignment, { auth: { teamId: 3 } });
+  assert.equal(assignment.assignment.round, 2);
+  assert.equal(database.tables.assignments.find((item) => item.teamId === 2).round, 2);
+  timer.resetTimer();
+  const afterRestart = await game.getCurrentBiddingState();
+  assert.equal(afterRestart.currentRound, 2);
+});
+
+
+test('rerunning a previous prompt resets only that prompt and round, then Next skips completed prompts', async () => {
+  await setup(3, 3);
+  const first = await game.startRound(1);
+  await submitBid(1, { bidMinutes: 40 });
+  await submitBid(3, { bidMinutes: 50 });
+  await game.nextPrompt();
+  await submitBid(2, { bidMinutes: 45 });
+  const closed = await game.endRound();
+  for (const teamId of [1, 2]) await database.score.create({ data: { teamId, judgeScore: 80, multiplier: 1.5, finalScore: 120 } });
+  await database.bid.create({ data: { teamId: 3, promptId: 1, round: 2, bidMinutes: 60 } });
+  const rerun = await game.rerunPrompt(1, 1, 1, closed.timerId);
+  assert.equal(rerun.currentRound, 1);
+  assert.equal(rerun.currentPrompt.id, 1);
+  assert.notEqual(rerun.timerId, first.timerId);
+  assert.deepEqual(rerun.resetWinners, [1]);
+  assert.deepEqual(rerun.bids, []);
+  assert.deepEqual(database.tables.assignments.map((row) => row.teamId), [2]);
+  assert.deepEqual(database.tables.scores.map((row) => row.teamId), [2]);
+  assert.equal(database.tables.bids.filter((row) => row.promptId === 1 && row.round === 1).length, 0);
+  assert.equal(database.tables.bids.filter((row) => row.promptId === 1 && row.round === 2).length, 1);
+  assert.equal(database.tables.bids.filter((row) => row.promptId === 2).length, 1);
+  assert.ok(rerun.openedPrompts.some((row) => row.roundNumber === 1 && row.promptId === 2));
+  await submitBid(1, { bidMinutes: 42, timerId: rerun.timerId });
+  await assert.rejects(submitBid(2, { bidMinutes: 35 }), /already has an assigned prompt/);
+  const next = await game.nextPrompt();
+  assert.equal(next.currentRound, 1);
+  assert.equal(next.currentPrompt.id, 3);
+  assert.equal(database.tables.assignments.find((row) => row.teamId === 2).promptId, 2);
+});
+
+test('prompt reruns reject unopened prompts, invalid input, stale sessions and abandoning another live prompt', async () => {
+  await setup();
+  const first = await game.startRound(1);
+  await assert.rejects(game.rerunPrompt(2, 1), /previously opened/);
+  await assert.rejects(game.rerunPrompt(1, 2), /previously opened/);
+  for (const value of [true, 'bad', 0, 1.5]) await assert.rejects(game.rerunPrompt(value, 1), /positive integer/);
+  await assert.rejects(game.rerunPrompt(1, true), /positive integer/);
+  await assert.rejects(game.rerunPrompt(99, 1), /not found/);
+  const second = await game.nextPrompt();
+  await assert.rejects(game.rerunPrompt(1, 1, null, first.timerId), /session has changed/);
+  await assert.rejects(game.rerunPrompt(1, 1, null, second.timerId), /Close the current prompt/);
+  assert.equal(timer.timerId, second.timerId);
+  const restarted = await game.rerunPrompt(2, 1, null, second.timerId);
+  assert.equal(restarted.currentPrompt.id, 2);
+  assert.notEqual(restarted.timerId, second.timerId);
+});
+
+test('a failed prompt rerun reset rolls back assignments, scores and bids without replacing the timer', async () => {
+  await setup();
+  await game.startRound(1);
+  await submitBid(1, { bidMinutes: 40 });
+  const closed = await game.endRound();
+  await database.score.create({ data: { teamId: 1, judgeScore: 80, multiplier: 1.5, finalScore: 120 } });
+  database.onQuery = ({ model, action }) => {
+    if (model === 'bids' && action === 'deleteMany') throw new Error('reset failed');
+  };
+  await assert.rejects(game.rerunPrompt(1, 1), /reset failed/);
+  assert.equal(database.tables.assignments.length, 1);
+  assert.equal(database.tables.scores.length, 1);
+  assert.equal(database.tables.bids.length, 1);
+  assert.equal(timer.timerId, closed.timerId);
+});
+
+
+test('main-branch v2 Round 2 restores its round, bids and coding phase after refresh and restart', async () => {
+  await setup(3, 3);
+  const coding = { startTime: 12345, isPaused: true, pausedAt: 13000 };
+  await database.gameConfig.create({ data: { id: 1, currentRound: 2, currentPromptIndex: 0, status: 'paused', biddingState: {
+    flowVersion: 2, promptIds: [2, 3], coding,
+    timer: { promptId: 2, timerId: 'main-round-two', startTime: Date.now(), savedAt: Date.now(),
+      durationSeconds: 60, remainingMs: 45000, isPaused: true }
+  } } });
+  await database.bid.create({ data: { teamId: 1, promptId: 2, round: 2, bidMinutes: 45 } });
+  const state = await game.getCurrentBiddingState();
+  assert.equal(state.currentRound, 2);
+  assert.equal(state.promptNumber, 2);
+  assert.equal(state.bids[0].round, 2);
+  assert.equal(state.timerId, 'main-round-two');
+  assert.equal(state.remainingMs, 45000);
+  assert.equal(state.codingState.startTime, coding.startTime);
+  assert.equal(state.codingState.isPaused, true);
+  assert.deepEqual(state.rounds.map((round) => round.roundNumber), [1, 2]);
+  timer.resetTimer();
+  const restored = await game.getCurrentBiddingState();
+  assert.equal(restored.currentRound, 2);
+  assert.equal(restored.bids[0].round, 2);
+  assert.equal(restored.codingState.startTime, coding.startTime);
+});
+
+test('the merged flow keeps Round 2 scoring and ends after the second pass', async () => {
+  await setup(2, 2);
+  await game.startRound(1);
+  await game.nextPrompt();
+  const roundTwo = await game.nextPrompt();
+  assert.equal(roundTwo.currentRound, 2);
+  await submitBid(1, { bidMinutes: 45 });
+  const closed = await game.endRound();
+  assert.equal(closed.winners[0].multiplier, 1.549);
+  await game.nextPrompt();
+  const done = await game.endRound();
+  assert.equal(done.currentRound, 2);
+  assert.equal(done.unassignedTeams, 1);
+  assert.equal(done.availableSlots, 1);
+  assert.equal(done.hasNextPrompt, false);
+  await assert.rejects(game.startRound(3), /must be 1 or 2/);
+});
+
+
+test('an expired prompt can be extended with its bids intact and exactly three winners reselected at the new deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  await setup(5, 2);
+  const config = await game.getOrCreateGameConfig();
+  await database.gameConfig.update({ where: { id: config.id }, data: { slotsPerPrompt: 3 } });
+  await database.assignment.create({ data: { teamId: 5, promptId: 2, round: 1, bidMinutes: 60, multiplier: 1.5 } });
+  await database.score.create({ data: { teamId: 5, judgeScore: 80, multiplier: 1.5, finalScore: 120 } });
+  const originalNow = timer.now;
+  let elapsed = 0;
+  timer.now = () => elapsed;
+  try {
+    const started = await game.startRound(1);
+    for (const [index, minutes] of [60, 45, 50, 55].entries()) await submitBid(index + 1, { bidMinutes: minutes });
+    elapsed = 60000;
+    t.mock.timers.tick(100);
+    await Promise.resolve();
+    const closed = await game.getCurrentBiddingState();
+    assert.equal(closed.status, 'round_ended');
+    assert.deepEqual(closed.winners.map((winner) => winner.teamId), [2, 3, 4]);
+    await database.score.create({ data: { teamId: 2, judgeScore: 90, multiplier: 1.5, finalScore: 135 } });
+    const extended = await game.extendRound(15, null, started.timerId);
+    assert.equal(extended.status, 'bidding');
+    assert.equal(extended.timerId, started.timerId);
+    assert.equal(extended.secondsRemaining, 15);
+    assert.equal(extended.availableSlots, 3);
+    assert.equal(extended.bids.length, 4);
+    assert.deepEqual(extended.winners, []);
+    assert.deepEqual(database.tables.assignments.map((row) => row.teamId), [5]);
+    assert.deepEqual(database.tables.scores.map((row) => row.teamId), [5]);
+    await submitBid(2, { bidMinutes: 35, timerId: started.timerId });
+    elapsed += 15000;
+    t.mock.timers.tick(100);
+    await Promise.resolve();
+    const endedAgain = await game.getCurrentBiddingState();
+    assert.equal(endedAgain.status, 'round_ended');
+    assert.equal(endedAgain.winners.length, 3);
+    assert.equal(endedAgain.winners[0].bidMinutes, 35);
+    assert.equal(database.tables.assignments.length, 4);
+  } finally { timer.resetTimer(); timer.now = originalNow; }
+});
+
+test('an expiry extension after restart restores its expiry callback and rolls back a failed reset', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  await setup(3, 1);
+  await game.startRound(1);
+  await submitBid(1, { bidMinutes: 45 });
+  timer.endsAt = Date.now() - 1;
+  t.mock.timers.tick(100);
+  await Promise.resolve();
+  const closed = await game.getCurrentBiddingState();
+  timer.resetTimer();
+  await game.getCurrentBiddingState();
+  database.onQuery = ({ model, action }) => {
+    if (model === 'config' && action === 'update') throw new Error('save failed');
+  };
+  await assert.rejects(game.extendRound(30, null, closed.timerId), /save failed/);
+  assert.equal(database.tables.assignments.length, 1);
+  assert.equal(database.tables.bids.length, 1);
+  assert.equal(timer.isRunning(), false);
+  database.onQuery = null;
+  await assert.rejects(game.extendRound(30, null, 'stale-session'), /session has changed/);
+  const reopened = await game.extendRound(30, null, closed.timerId);
+  assert.equal(reopened.status, 'bidding');
+  assert.equal(reopened.bids.length, 1);
+  timer.endsAt = Date.now() - 1;
+  t.mock.timers.tick(100);
+  await Promise.resolve();
+  assert.equal((await game.getCurrentBiddingState()).status, 'round_ended');
+  assert.equal(database.tables.assignments.length, 1);
+});
+
+test('existing two-slot configuration is repaired so the lowest three bids win', async () => {
+  await setup(4, 1);
+  const config = await game.getOrCreateGameConfig();
+  await database.gameConfig.update({ where: { id: config.id }, data: { slotsPerPrompt: 2 } });
+  const started = await game.startRound(1);
+  assert.equal(started.config.slotsPerPrompt, 3);
+  assert.equal(started.availableSlots, 3);
+  assert.equal(database.tables.config[0].slotsPerPrompt, 3);
+  for (const [index, minutes] of [60, 45, 50, 55].entries()) await submitBid(index + 1, { bidMinutes: minutes });
+  const closed = await game.endRound();
+  assert.deepEqual(closed.winners.map((winner) => winner.teamId), [2, 3, 4]);
 });

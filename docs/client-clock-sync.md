@@ -22,8 +22,8 @@ that countdown. They do not display the server's time of day.
   `serverMonotonicTime`. Sequence ordering prevents stale packets from rewinding
   the display even if the server's wall clock changes. A new process has a new
   stream ID.
-- Round N identifies Prompt N in the captured display order. At expiry, the server
-  awards the current round and stores `round_ended`; it does not start another
+- Round N identifies pass N through the captured prompt order. At expiry, the server
+  awards the current prompt and stores `round_ended`; it does not start another
   timer. The prompt, bids and winners remain visible until admin Next.
 - `rounds`, `totalRounds`, `hasNextRound` and `nextRoundNumber` describe the sequence.
   A closed snapshot retains its timer session ID, winners and summary so refresh
@@ -123,11 +123,14 @@ or rerun. If the process crashes before that checkpoint succeeds, the frozen
 preparation record recovers paused. Admin Resume is then required; the server
 does not guess when bidding began or silently grant a new running countdown.
 
-The captured prompt order keeps Round N mapped to Prompt N throughout the event.
-Bids and assignments created by the previous pass-based flow are projected into
-prompt rounds when read; existing storage keys and earned scores are preserved.
-A legacy active session can finish with its existing bids. New rounds store their
-own round number. Every new award uses the same k=1 multiplier curve.
+The captured prompt order is shared by all passes. `promptNumber` and
+`totalPrompts` describe prompt position independently of `currentRound`.
+`hasNextPrompt`, `nextPromptNumber`, `passComplete`, and `unassignedTeams` describe
+progress; `nextRoundNumber` is the next prompt's pass number. A new pass opens
+only after the current pass ends, for unassigned teams with available slots.
+Version 2 prompt-based auctions are exposed as pass 1 while keeping their database
+keys. New passes reserve separate storage keys to preserve old bids and scores.
+Awards use k=1 in Round 1 and k=0.7 in Round 2; bidding has at most two passes.
 Prompt set/order changes require reset while rounds remain unfinished; content
 edits remain blocked during active/paused bidding.
 
@@ -163,7 +166,7 @@ npm run build
 
 The in-process suite checks shared HTTP/socket validation, collision ordering,
 expiry during database reads, pause/extension snapshots, stale controls, expiry without
-advancement, manual prompt rounds, restart recovery and assignment/score/reset
+advancement, manual prompt and pass progression, restart recovery and assignment/score/reset
 behavior. It does not replace testing PostgreSQL constraints or live network
 connections in the full integration suite.
 

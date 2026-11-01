@@ -6,15 +6,25 @@ backend + admin panel for "bid and code" — a hackathon format where teams bid 
 
 ## what is this
 
-we're running a hackathon called **Bid and Code**. up to 10 teams show up in person, and instead of just handing out problem statements, we make them bid for it.
+Round 1 is the first pass through all prompts in captured display order. Moving
+to the next prompt keeps the round number. Once the pass is complete, the admin
+can start Round 2 if teams remain unassigned and prompt slots remain open. Round 2
+revisits prompts with free slots; bidding ends after that second pass. Assigned teams cannot bid again.
 
-there are 4 prompts (problem statements). each prompt is shown on a big screen for 1 minute. during that minute, all teams place their bids — they're bidding how many minutes they'll take to solve that prompt. lower bid = less time to code but a higher score multiplier later.
+Each prompt has a server-owned countdown. At zero, bidding closes and winners are
+assigned. The prompt, bids and results stay visible until the admin advances.
+**Close Current Prompt** also closes and awards just that prompt. Next can close
+the active prompt early, then open the next prompt or eligible pass.
 
-its an open auction. everyone can see everyone's bids in real time on screen. no duplicate bids allowed — if someone already bid 60 mins, you can't bid 60.
+Teams bid their coding time in minutes (defaults: 30–120). The lowest unique bids
+win the configured slots, and each team receives at most one assignment. Admin
+history groups every prompt's bids by bidding pass. Existing stored bids and
+earned scores are preserved. Multiplier, boost and k details appear only in admin
+views; team views show time commitments and scores.
 
 after the minute is up, the 3 lowest bidders win that prompt and get pulled out of bidding. then the next prompt shows up and the remaining teams bid again. this goes on for all 4 prompts.
 
-after round 1, any team that didn't land a prompt (either they lost every bid or just didn't bid) gets a second shot. round 2 goes through the same prompts again but only for ones that still have open slots. same 1 minute per prompt. the catch — round 2 bidders get a worse multiplier than round 1 winners. you snooze, you kinda lose.
+Round 1 uses k = 1.0; Round 2 uses k = 0.7.
 
 once everyone has a prompt, teams code for the time they committed to. bid 45 mins? you get 45 mins. bid 80? you get 80. after time's up judges score your work out of 100, and your final score = judge score × multiplier.
 
@@ -74,56 +84,15 @@ the exponent `(1 - bid/base_time)` gives us a value between 0 and 0.75 (since mi
 
 ### fairness check
 
-say team A bids 50 mins in round 1 (multiplier 1.792) and gets a judge score of 70.
-final score = 70 × 1.792 = **125.44**
-
-team B plays safe, bids 110 mins in round 1 (multiplier 1.087), scores 90 from judges.
-final score = 90 × 1.087 = **97.83**
-
-team A wins even though their code had a few rough edges — but they also delivered in under half the total available time. risk = reward.
-
-what if someone overcommits? team C bids 30 mins (multiplier 2.117) but panics and delivers an incomplete project, scoring 45 from judges:
-final score = 45 × 2.117 = **95.27**
-
-team C loses to both Team A and Team B. the formula rewards speed, but not at the cost of total failure.
-
-now if someone lands in round 2 and bids 30 mins (multiplier 1.690), scores 75:
-final score = 75 × 1.690 = **126.75**
-
-they can still compete, but the reduced k factor makes sure round 2 winners don't get an outsized advantage.
-
----
-
-## how the bidding flow works
-
-### round 1 (4 minutes total)
-
-```
-prompt 1 shown → 60 sec timer → all teams bid → 3 lowest win → removed from pool
-prompt 2 shown → 60 sec timer → remaining teams bid → 3 lowest win → removed
-prompt 3 shown → 60 sec timer → remaining teams bid → 3 lowest win → removed
-prompt 4 shown → 60 sec timer → remaining teams bid → 3 lowest win → removed
+```text
+Start Round 1 → Prompt 1 → Prompt 2 → ... → final prompt (all in Round 1)
+Admin clicks Next → Round 2 → prompts with open slots, for unassigned teams
 ```
 
-after each prompt's timer ends, the 3 teams with the lowest bids get assigned that prompt. they're done bidding. the rest move on.
-
-with 10 teams and 4 prompts (3 slots each = 12 total slots), everyone should have a prompt by end of round 1. but things happen — teams might not bid, or fewer teams might show up, so round 2 exists as a safety net.
-
-### round 2 (only if needed)
-
-same flow but only for:
-- teams that haven't been assigned a prompt yet
-- prompts that still have open slots (fewer than 3 teams assigned)
-
-round 2 uses `k = 0.7` instead of `k = 1.0` for the multiplier. you still get rewarded for low bids, just not as much.
-
-### edge cases
-
-- **team doesn't bid during a prompt's window**: treated as "didn't participate" for that prompt. no penalty other than not winning that slot.
-- **only 1-2 teams left for last prompt**: they get it automatically. if only 1 team is left and doesn't bid, they get assigned the remaining prompt at base time (multiplier = 1.0).
-- **fewer than 10 teams show up**: admin adjusts team count before starting. the math still works, you just might have fewer than 3 teams per prompt.
-
----
+Every timer expiry waits for the admin. Pause and extend affect only the current
+prompt's countdown. A new pass can start only after the previous pass finishes;
+rerunning a pass clears its bids, assignments and scores across all its prompts.
+Bidding has no further pass when all teams are assigned or no prompt slots remain.
 
 ## tech stack
 
@@ -197,12 +166,12 @@ POST   /api/admin/prompts              → add a prompt { title, description }
 PUT    /api/admin/prompts/:id          → edit prompt
 DELETE /api/admin/prompts/:id          → remove prompt
 
-POST   /api/admin/round/start          → start round 1 (or round 2)
+POST   /api/admin/round/start          → open the next prompt in the current or next eligible pass
 POST   /api/admin/round/pause          → pause current timer
 POST   /api/admin/round/resume         → resume timer
 POST   /api/admin/round/extend         → add time { extraSeconds }
-POST   /api/admin/round/next-prompt    → force skip to next prompt
-POST   /api/admin/round/end            → force end current round
+POST   /api/admin/round/next-prompt    → manually open the next prompt or eligible pass
+POST   /api/admin/round/end            → close and award the current prompt
 
 PUT    /api/admin/config               → update game settings { baseTime, minBid, slotsPerPrompt, ... }
 GET    /api/admin/config               → get current game settings
@@ -445,9 +414,9 @@ step by step, the whole flow:
 6. they can see everyone else's bids updating in real time
 7. timer hits 0, system picks the 3 lowest bids as winners
 8. winners get their assignment notification with their multiplier
-9. next prompt appears, repeat for all 4
-10. after round 1, admin checks if any teams are left without a prompt
-11. if yes, admin starts round 2 (same flow, reduced multiplier)
+9. the admin clicks Next to open Round 2 / Prompt 2; repeat manually for all prompts
+10. after each round, results stay visible until the admin clicks Next
+11. admin clicks Next for each remaining prompt; prompts share the pass number; another pass is available for unassigned teams with open slots
 12. all teams now have prompts — coding begins
 13. each team's timer counts down from their bid time
 14. time's up → judges evaluate → admin enters scores

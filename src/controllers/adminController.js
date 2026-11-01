@@ -10,6 +10,7 @@ const GAME_STATUS = require('../constants/gameStatus');
 const SOCKET_EVENTS = require('../constants/socketEvents');
 const { broadcast } = require('../socket/emitter');
 const { withGameLock } = require('../services/gameLock');
+const { getRoundDefinitions, publicRound } = require('../services/roundService');
 
 const getTeamOrThrow = async (id) => {
   if (!isIntegerInput(id) || id <= 0) {
@@ -38,9 +39,10 @@ const listTeams = async (req, res, next) => {
       }
     });
 
+    const config = await gameService.getOrCreateGameConfig();
     res.status(200).json({ success: true, teams: teams.map((team) => ({
       ...team,
-      assignment: team.assignment ? { ...team.assignment, multiplier: Number(team.assignment.multiplier) } : null,
+      assignment: team.assignment ? { ...publicRound(team.assignment, config), multiplier: Number(team.assignment.multiplier) } : null,
       score: team.score ? { ...team.score, multiplier: Number(team.score.multiplier), finalScore: Number(team.score.finalScore) } : null
     })) });
   } catch (error) {
@@ -50,18 +52,19 @@ const listTeams = async (req, res, next) => {
 
 const listBids = async (req, res, next) => {
   try {
+    const config = await gameService.getOrCreateGameConfig();
+    const rounds = await getRoundDefinitions(config);
     const requested = req.query?.round;
     if (requested !== undefined && (!isIntegerInput(requested) || Number(requested) < 1))
       throw new ApiError(400, 'round must be a positive integer');
-    const targetRound = requested !== undefined ? Number(requested) : null;
     const bids = await prisma.bid.findMany({
-      ...(targetRound !== null ? { where: { round: targetRound } } : {}),
       include: { prompt: true, team: { select: { teamName: true } } },
       orderBy: [{ submittedAt: 'asc' }, { id: 'asc' }]
     });
     res.setHeader('Cache-Control', 'no-store');
-    res.status(200).json({ success: true,
-      bids: bids.map(({ team, ...bid }) => ({ ...bid, teamName: team.teamName })) });
+    res.status(200).json({ success: true, rounds,
+      bids: bids.map(({ team, ...bid }) => ({ ...publicRound(bid, config), teamName: team.teamName }))
+        .filter((bid) => requested === undefined || bid.round === Number(requested)) });
   } catch (error) { next(error); }
 };
 
@@ -226,6 +229,8 @@ const listPrompts = async (req, res, next) => {
 const createPrompt = async (req, res, next) => {
   try {
     const config = await gameService.getOrCreateGameConfig();
+    if (await gameService.isPromptOrderLocked(config))
+      throw new ApiError(400, 'Reset bidding before changing the round prompt order');
     if ([GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status))
       throw new ApiError(400, 'Cannot change prompts while a round is in progress');
     const { title, description, displayOrder } = req.body || {};
@@ -260,6 +265,8 @@ const createPrompt = async (req, res, next) => {
 const updatePrompt = async (req, res, next) => {
   try {
     const config = await gameService.getOrCreateGameConfig();
+    if (req.body?.displayOrder !== undefined && await gameService.isPromptOrderLocked(config))
+      throw new ApiError(400, 'Reset bidding before changing the round prompt order');
     if ([GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status))
       throw new ApiError(400, 'Cannot change prompts while a round is in progress');
     const id = Number(req.params.id);
@@ -298,6 +305,8 @@ const updatePrompt = async (req, res, next) => {
 const deletePrompt = async (req, res, next) => {
   try {
     const config = await gameService.getOrCreateGameConfig();
+    if (await gameService.isPromptOrderLocked(config))
+      throw new ApiError(400, 'Reset bidding before changing the round prompt order');
     if ([GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status))
       throw new ApiError(400, 'Cannot change prompts while a round is in progress');
     const id = Number(req.params.id);
@@ -385,6 +394,13 @@ const rerunRound = async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+};
+
+const rerunPrompt = async (req, res, next) => {
+  try {
+    const { promptId, round, timerId } = req.body || {};
+    res.status(200).json(await gameService.rerunPrompt(promptId, round, req.auth?.adminId, timerId));
+  } catch (error) { next(error); }
 };
 
 const resetGame = async (req, res, next) => {
@@ -571,6 +587,7 @@ const controllers = {
   nextPrompt,
   endRound,
   rerunRound,
+  rerunPrompt,
   submitScore: scoreController.submitScore,
   getLeaderboard: scoreController.getLeaderboard,
   resetGame,
