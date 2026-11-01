@@ -77,6 +77,17 @@ const initializeDatabase = async () => {
   try {
     await runOperation(async () => {
       await prisma.$connect();
+      if (prisma.$executeRawUnsafe) {
+        await prisma.$executeRawUnsafe(`
+          CREATE TABLE IF NOT EXISTS submissions (
+            id SERIAL PRIMARY KEY,
+            team_id INT UNIQUE REFERENCES teams(id) ON DELETE CASCADE,
+            github_url VARCHAR(500) NOT NULL,
+            submitted_at TIMESTAMP DEFAULT NOW(),
+            updated_at TIMESTAMP DEFAULT NOW()
+          );
+        `).catch((err) => logger.warn(`Automatic submissions table check skipped: ${err.message}`));
+      }
       await ensureAdminAccount();
       await require('./services/gameService').getCurrentBiddingState();
     });

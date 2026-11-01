@@ -2,7 +2,7 @@
 // additionally verify connector behavior, SQL constraints and migrations.
 const { isDeepStrictEqual } = require('node:util');
 const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
-  const tables = { config: [], admins: [], teams: [], prompts: [], bids: [], assignments: [], scores: [], logs: [] };
+  const tables = { config: [], admins: [], teams: [], prompts: [], bids: [], assignments: [], scores: [], logs: [], submissions: [] };
   const ids = Object.fromEntries(Object.keys(tables).map((name) => [name, 0]));
   const clone = (value) => structuredClone(value);
   const error = (code, message, meta) => Object.assign(new Error(message), { code, meta });
@@ -12,6 +12,7 @@ const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
     if (key === 'prompt') return ['prompts', byId('prompts', row.promptId) || null];
     if (key === 'assignment') return ['assignments', tables.assignments.find((a) => a.teamId === row.id) || null];
     if (key === 'score') return ['scores', tables.scores.find((a) => a.teamId === row.id) || null];
+    if (key === 'submission') return ['submissions', tables.submissions.find((s) => s.teamId === row.id) || null];
     if (key === 'assignments') return ['assignments', tables.assignments.filter((a) => a.promptId === row.id)];
     if (key === 'bids') return ['bids', tables.bids.filter((a) => a.teamId === row.id)];
     return null;
@@ -56,7 +57,8 @@ const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
   const unique = {
     config: [['id']], admins: [['id'], ['username']], teams: [['id'], ['teamName']], prompts: [['id']],
     bids: [['id'], ['teamId', 'promptId', 'round'], ['promptId', 'bidMinutes', 'round']],
-    assignments: [['id'], ['teamId']], scores: [['id'], ['teamId']], logs: [['id']]
+    assignments: [['id'], ['teamId']], scores: [['id'], ['teamId']], logs: [['id']],
+    submissions: [['id'], ['teamId']]
   };
   const validate = (name, row, excludeId) => {
     for (const fields of unique[name]) {
@@ -69,7 +71,7 @@ const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
   };
   const ensureDeletable = (name, rows) => {
     const key = name === 'teams' ? 'teamId' : name === 'prompts' ? 'promptId' : null;
-    if (key && ['bids', 'assignments', 'scores'].some((table) =>
+    if (key && ['bids', 'assignments', 'scores', 'submissions'].some((table) =>
       tables[table].some((row) => rows.some((parent) => row[key] === parent.id))))
       throw error('P2003', 'Foreign key constraint failed');
   };
@@ -147,9 +149,11 @@ const createMemoryPrisma = ({ slotsPerPrompt = 3 } = {}) => {
       bidDurationSeconds: 60, currentRound: 0, currentPromptIndex: -1, status: 'waiting', biddingState: null }),
     admin: model('admins', { role: 'admin' }), team: model('teams', { isActive: true }), prompt: model('prompts'),
     bid: model('bids', { round: 1 }), assignment: model('assignments'), score: model('scores'), adminLog: model('logs'),
+    submission: model('submissions'),
     $connect: () => query('database', 'connect', {}, () => undefined),
     $disconnect: () => Promise.resolve(),
     $queryRaw: (...args) => query('database', 'queryRaw', args, () => [{ ready: 1 }]),
+    $executeRawUnsafe: (...args) => query('database', 'executeRawUnsafe', args, () => 1),
     async $transaction(operations) {
       const saved = clone(tables);
       try {

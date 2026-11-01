@@ -37,6 +37,13 @@ router.get('/leaderboard', adminController.getLeaderboard);
 // reset
 router.post('/reset', adminController.resetGame);
 
+// coding timers & submissions
+router.get('/submissions', adminController.listSubmissions);
+router.post('/coding/start', adminController.startCoding);
+router.post('/coding/pause', adminController.pauseCoding);
+router.post('/coding/resume', adminController.resumeCoding);
+router.post('/coding/reset', adminController.resetCoding);
+
 // game config
 router.get('/config', adminController.getConfig);
 router.put('/config', adminController.updateConfig);

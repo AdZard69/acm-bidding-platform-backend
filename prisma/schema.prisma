@@ -41,6 +41,7 @@ model Team {
   bids       Bid[]
   assignment Assignment?
   score      Score?
+  submission Submission?
 
   @@map("teams")
 }
@@ -118,4 +119,16 @@ model GameConfig {
   updatedAt          DateTime @updatedAt @map("updated_at")
 
   @@map("game_config")
+}
+
+model Submission {
+  id          Int      @id @default(autoincrement())
+  teamId      Int      @unique @map("team_id")
+  githubUrl   String   @map("github_url") @db.VarChar(500)
+  submittedAt DateTime @default(now()) @map("submitted_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@map("submissions")
 }

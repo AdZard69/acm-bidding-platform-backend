@@ -1,5 +1,6 @@
 const prisma = require('../config/prisma');
 const gameService = require('../services/gameService');
+const submissionService = require('../services/submissionService');
 
 /**
  * Returns current prompt, seconds left, and placed bids for that prompt
@@ -65,6 +66,34 @@ const getMyAssignment = async (req, res, next) => {
 };
 
 /**
+ * Submit project github URL for calling team
+ */
+const submitProject = async (req, res, next) => {
+  try {
+    const teamId = req.auth?.teamId;
+    const { githubUrl } = req.body || {};
+    const result = await submissionService.submitProject(teamId, githubUrl);
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Returns submission details and personal coding timer for calling team
+ */
+const getMySubmission = async (req, res, next) => {
+  try {
+    const teamId = req.auth?.teamId;
+    const result = await submissionService.getMySubmission(teamId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
  * Public leaderboard
  */
 const getLeaderboard = (req, res, next) => {
@@ -78,5 +107,7 @@ module.exports = {
   updateBid,
   getMyBids,
   getMyAssignment,
+  submitProject,
+  getMySubmission,
   getLeaderboard
 };

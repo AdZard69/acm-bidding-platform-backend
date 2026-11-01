@@ -16,7 +16,12 @@ const SOCKET_EVENTS = Object.freeze({
     ASSIGNMENT_RECEIVED: 'assignment:received',
     SCORE_RECEIVED: 'score:received',
     TIME_SYNC: 'time:sync',
-    ERROR: 'game:error'
+    ERROR: 'game:error',
+    CODING_STARTED: 'coding:started',
+    CODING_PAUSED: 'coding:paused',
+    CODING_RESUMED: 'coding:resumed',
+    CODING_RESET: 'coding:reset',
+    SUBMISSION_UPDATED: 'submission:updated'
   },
 
   // Team Client -> Server

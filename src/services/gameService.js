@@ -161,12 +161,19 @@ const buildState = async (config, preparedPrompt) => {
   const unassignedTeamsCount = await prisma.team.count({ where: { isActive: true, assignment: null } });
   const openPromptsForRound2 = await getEligiblePromptsForRound(2, config.slotsPerPrompt);
   const canStartRound2 = config.currentRound >= 1 && (closed || config.status === GAME_STATUS.WAITING) && unassignedTeamsCount > 0 && openPromptsForRound2.length > 0;
+  const coding = config.biddingState?.coding || null;
 
   return {
     success: true,
     ...timer,
     secondsLeft: timer.secondsRemaining,
     status: config.status,
+    codingState: {
+      isStarted: Boolean(coding?.startTime),
+      startTime: coding?.startTime || null,
+      isPaused: Boolean(coding?.isPaused),
+      pausedAt: coding?.pausedAt || null
+    },
     currentRound: config.currentRound,
     roundNumber: config.currentRound,
     round: config.currentRound,

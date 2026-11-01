@@ -3,6 +3,7 @@ const ApiError = require('../utils/apiError');
 const { hashPassword } = require('../utils/password');
 const { validatePromptInput, validateGameConfig, validateTeamInput, isIntegerInput } = require('../utils/validators');
 const gameService = require('../services/gameService');
+const submissionService = require('../services/submissionService');
 const scoreController = require('./scoreController');
 const timerManager = require('../socket/timerManager');
 const GAME_STATUS = require('../constants/gameStatus');
@@ -161,6 +162,7 @@ const deleteTeam = async (req, res, next) => {
     await getTeamOrThrow(id);
 
     await prisma.$transaction([
+      prisma.submission.deleteMany({ where: { teamId: id } }),
       prisma.bid.deleteMany({ where: { teamId: id } }),
       prisma.assignment.deleteMany({ where: { teamId: id } }),
       prisma.score.deleteMany({ where: { teamId: id } }),
@@ -393,6 +395,7 @@ const resetGame = async (req, res, next) => {
       if (value !== undefined && typeof value !== 'boolean') throw new ApiError(400, `${name} must be a boolean`);
     }
     await prisma.$transaction([
+      prisma.submission.deleteMany(),
       prisma.bid.deleteMany(),
       prisma.score.deleteMany(),
       prisma.assignment.deleteMany(),
@@ -503,6 +506,53 @@ const updateConfig = async (req, res, next) => {
   }
 };
 
+const listSubmissions = async (req, res, next) => {
+  try {
+    const result = await submissionService.listAllSubmissions();
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const startCoding = async (req, res, next) => {
+  try {
+    const result = await submissionService.startCodingTimers(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const pauseCoding = async (req, res, next) => {
+  try {
+    const result = await submissionService.pauseCodingTimers(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resumeCoding = async (req, res, next) => {
+  try {
+    const result = await submissionService.resumeCodingTimers(req.auth?.adminId);
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const resetCoding = async (req, res, next) => {
+  try {
+    const { wipeSubmissions } = req.body || {};
+    const result = await submissionService.resetCodingTimers(req.auth?.adminId, Boolean(wipeSubmissions));
+    res.status(200).json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const controllers = {
   listBids,
   listTeams,
@@ -525,7 +575,12 @@ const controllers = {
   getLeaderboard: scoreController.getLeaderboard,
   resetGame,
   getConfig,
-  updateConfig
+  updateConfig,
+  listSubmissions,
+  startCoding,
+  pauseCoding,
+  resumeCoding,
+  resetCoding
 };
 
 for (const name of ['createTeam', 'updateTeam', 'deleteTeam', 'toggleTeam',

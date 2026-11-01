@@ -278,6 +278,45 @@ test('deleting an awarded prompt removes dependent bids, assignments and scores 
   assert.equal(database.tables.prompts.length, 1);
 });
 
+test('coding timers and project submissions can be managed, submitted, paused, resumed and reset', async () => {
+  await database.assignment.create({ data: { teamId: 1, promptId: 1, bidMinutes: 45, round: 1, multiplier: 1.649 } });
+
+  const startCoding = await admin('/coding/start', {});
+  assert.equal(startCoding.status, 200);
+  assert.equal(startCoding.body.coding.isPaused, false);
+
+  const pauseCoding = await admin('/coding/pause', {});
+  assert.equal(pauseCoding.status, 200);
+  assert.equal(pauseCoding.body.coding.isPaused, true);
+
+  const resumeCoding = await admin('/coding/resume', {});
+  assert.equal(resumeCoding.status, 200);
+  assert.equal(resumeCoding.body.coding.isPaused, false);
+
+  const subRes = await api('/api/bid/submission', {
+    method: 'POST',
+    body: { githubUrl: 'https://github.com/team-alpha/bidding-project' },
+    token: teamToken
+  });
+  assert.equal(subRes.status, 200);
+  assert.equal(subRes.body.submission.githubUrl, 'https://github.com/team-alpha/bidding-project');
+
+  const mySub = await api('/api/bid/submission', { token: teamToken });
+  assert.equal(mySub.status, 200);
+  assert.equal(mySub.body.submission.githubUrl, 'https://github.com/team-alpha/bidding-project');
+  assert.equal(mySub.body.assignment.bidMinutes, 45);
+
+  const allSubs = await admin('/submissions', undefined, 'GET');
+  assert.equal(allSubs.status, 200);
+  assert.equal(allSubs.body.submissions.length, 2);
+  const team1Sub = allSubs.body.submissions.find((s) => s.teamId === 1);
+  assert.ok(team1Sub && team1Sub.isSubmitted);
+
+  const resetCoding = await admin('/coding/reset', { wipeSubmissions: true });
+  assert.equal(resetCoding.status, 200);
+  assert.equal(database.tables.submissions.length, 0);
+});
+
 test('reset validates destructive flags and atomically clears state with each supported wipe option', async () => {
   await start();
   await bid(45);

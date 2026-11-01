@@ -16,5 +16,7 @@ router.put('/update', bidController.updateBid);
 router.put('/', bidController.updateBid);
 router.get('/my-bids', bidController.getMyBids);
 router.get('/assignment', bidController.getMyAssignment);
+router.post('/submission', bidController.submitProject);
+router.get('/submission', bidController.getMySubmission);
 
 module.exports = router;
