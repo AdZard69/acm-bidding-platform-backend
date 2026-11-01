@@ -14,6 +14,25 @@ const promptRound = (record, rounds) => record ? {
 } : null;
 const getBidRound = (config) => config.biddingState?.bidRound ?? config.currentRound;
 
+// Rounds opened since the last reset. States saved before this list existed
+// were strictly sequential, so Rounds 1..currentRound had all been opened.
+const getOpenedRounds = (config) => {
+  const saved = config?.biddingState?.openedRounds;
+  if (Array.isArray(saved)) return saved;
+  return Array.from({ length: Math.max(0, config?.currentRound || 0) }, (_, index) => index + 1);
+};
+const withOpenedRound = (config, round) =>
+  [...new Set([...getOpenedRounds(config), round])].sort((a, b) => a - b);
+// The first never-opened round after the current one. Rerunning an earlier
+// round moves currentRound back, so Next must skip rounds already played.
+const getNextRound = (config, totalRounds) => {
+  const opened = new Set(getOpenedRounds(config));
+  for (let round = (config?.currentRound || 0) + 1; round <= totalRounds; round++) {
+    if (!opened.has(round)) return round;
+  }
+  return null;
+};
+
 // Preserve existing bids: a running auction from the old pass-based flow keeps
 // its storage key, while its public round becomes the active prompt's position.
 const normalizeLegacyConfig = async (config) => {
@@ -27,4 +46,7 @@ const normalizeLegacyConfig = async (config) => {
     biddingState: { ...legacy, flowVersion: 2, bidRound: config.currentRound, promptIds: rounds.map((round) => round.promptId) }
   };
 };
-module.exports = { getRoundDefinitions, promptRound, getBidRound, normalizeLegacyConfig };
+module.exports = {
+  getRoundDefinitions, promptRound, getBidRound, normalizeLegacyConfig,
+  getOpenedRounds, withOpenedRound, getNextRound
+};
