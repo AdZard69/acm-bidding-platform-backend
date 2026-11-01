@@ -9,7 +9,9 @@ const { withGameLock } = require('./gameLock');
 const { isIntegerInput } = require('../utils/validators');
 const logger = require('../utils/logger');
 const { outsideOperation, runOperation } = require('../utils/operation');
-const { getRoundDefinitions, getBidRound, normalizeLegacyConfig } = require('./roundService');
+const {
+  getRoundDefinitions, getBidRound, normalizeLegacyConfig, withOpenedRound, getNextRound
+} = require('./roundService');
 
 const isActive = (config) => [GAME_STATUS.BIDDING, GAME_STATUS.PAUSED].includes(config.status);
 
@@ -145,8 +147,8 @@ const buildState = async (config, preparedPrompt) => {
     prompt: currentPrompt,
     rounds,
     totalRounds: rounds.length,
-    hasNextRound: config.currentRound > 0 && config.currentRound < rounds.length,
-    nextRoundNumber: config.currentRound < rounds.length ? config.currentRound + 1 : null,
+    hasNextRound: config.currentRound > 0 && getNextRound(config, rounds.length) !== null,
+    nextRoundNumber: getNextRound(config, rounds.length),
     winners: closed ? config.biddingState?.winners || [] : [],
     summary: closed ? config.biddingState?.summary || null : null,
     availableSlots: currentPrompt ? Math.max(0, config.slotsPerPrompt - assignedSlots) : 0,
@@ -253,7 +255,8 @@ const startAtRound = async (config, round, adminId = null, fromNext = false) => 
   const prompt = entry && await prisma.prompt.findUnique({ where: { id: entry.promptId } });
   if (!prompt) throw new ApiError(409, `The prompt for Round ${round} is missing. Reset bidding before changing the prompt list.`);
   const updated = { ...config, currentRound: round, currentPromptIndex: round - 1, status: GAME_STATUS.BIDDING,
-    biddingState: { flowVersion: 2, bidRound: round, promptIds: rounds.map((item) => item.promptId) }
+    biddingState: { flowVersion: 2, bidRound: round, promptIds: rounds.map((item) => item.promptId),
+      openedRounds: withOpenedRound(config, round) }
   };
   const state = await openPrompt(updated, prompt, { fromNext });
   void outsideOperation(() => logAction(adminId, 'ROUND_START', `Started Round ${round}: prompt ${prompt.id}`));
@@ -267,9 +270,9 @@ const startRound = async (roundInput, adminId = null) => {
   if (await prisma.team.count({ where: { isActive: true } }) === 0)
     throw new ApiError(400, 'No active teams found. Please create teams before starting a round');
   if (!await prisma.prompt.count()) throw new ApiError(400, 'No prompts found. Please create prompts before starting a round');
-  const round = roundInput != null ? Number(roundInput) : (config.currentRound ? config.currentRound + 1 : 1);
-  if (!isIntegerInput(roundInput ?? round) || round < 1) throw new ApiError(400, 'Round number must be a positive integer');
   const rounds = await getRoundDefinitions(config);
+  const round = roundInput != null ? Number(roundInput) : (getNextRound(config, rounds.length) ?? rounds.length + 1);
+  if (!isIntegerInput(roundInput ?? round) || round < 1) throw new ApiError(400, 'Round number must be a positive integer');
   if (round > rounds.length) throw new ApiError(400, `Round number cannot extend beyond the total number of prompts (${rounds.length})`);
   return startAtRound(config, round, adminId);
 };
@@ -281,7 +284,11 @@ const requireActiveTimer = async (status, expectedTimerId, allowExpired = false)
       : config.status === GAME_STATUS.PAUSED ? 'Round is already paused' : 'Cannot pause: round is not actively bidding';
     throw new ApiError(400, message);
   }
-  if (!isActive(config) && config.status !== GAME_STATUS.ROUND_ENDED) throw new ApiError(400, 'Cannot extend timer: no prompt is currently active');
+  // A closed round has been awarded. Extending it would reopen bidding and award
+  // again, and after a restart its timer has no expiry handler. Rerun reopens it.
+  if (config.status === GAME_STATUS.ROUND_ENDED)
+    throw new ApiError(400, `Round ${config.currentRound} is complete and cannot be extended. Use Rerun to reopen it.`);
+  if (!isActive(config)) throw new ApiError(400, 'Cannot extend timer: no prompt is currently active');
   if (expectedTimerId && expectedTimerId !== timerManager.timerId)
     throw new ApiError(409, 'The bidding session has changed. Refresh before using timer controls.');
   if (!allowExpired && timerManager.hasExpired() && config.status !== GAME_STATUS.PAUSED)
@@ -418,10 +425,11 @@ const advance = async (adminId = null, expectedTimerId) => {
   const completed = isActive(config) ? await closeCurrentRound(config, adminId, 'manual_next') : await buildState(config);
   if (isActive(config)) config = await getOrCreateGameConfig();
   const rounds = await getRoundDefinitions(config);
-  if (config.currentRound >= rounds.length) return {
+  const nextRound = getNextRound(config, rounds.length);
+  if (nextRound === null) return {
     ...await buildState(config), message: 'All prompt rounds are complete', round: config.currentRound
   };
-  const next = await startAtRound(config, config.currentRound + 1, adminId, true);
+  const next = await startAtRound(config, nextRound, adminId, true);
   return { ...next, completedRound: { round: config.currentRound, promptId: completed.currentPrompt?.id,
     winners: completed.winners, summary: completed.summary } };
 };
@@ -462,6 +470,11 @@ const rerunRound = async (roundInput, adminId = null) => {
   if (targetRound > rounds.length) {
     throw new ApiError(400, `Round number cannot extend beyond the total number of prompts (${rounds.length})`);
   }
+  // Rerunning another round would replace the live timer and abandon the
+  // current round without awarding it. Rerunning the live round restarts it.
+  if (isActive(config) && targetRound !== config.currentRound) {
+    throw new ApiError(400, `Round ${config.currentRound} is still in progress. End it before rerunning Round ${targetRound}.`);
+  }
 
   const entry = rounds[targetRound - 1];
   const prompt = entry && await prisma.prompt.findUnique({ where: { id: entry.promptId } });
@@ -490,6 +503,7 @@ const rerunRound = async (roundInput, adminId = null) => {
       flowVersion: 2,
       bidRound: targetRound,
       promptIds: rounds.map((item) => item.promptId),
+      openedRounds: withOpenedRound(config, targetRound),
       winners: [],
       summary: null
     }

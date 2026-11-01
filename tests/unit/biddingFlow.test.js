@@ -678,3 +678,57 @@ test('rerunning round 2 resets only round 2 winners and preserves round 1 winner
     /already has an assigned prompt/
   );
 });
+
+test('a closed round cannot be extended back into bidding', async () => {
+  await setup();
+  await game.startRound(1);
+  await submitBid(1, { bidMinutes: 45 });
+  await game.endRound();
+  await assert.rejects(game.extendRound(30), /complete and cannot be extended/);
+  const state = await game.getCurrentBiddingState();
+  assert.equal(state.status, 'round_ended');
+  assert.equal(state.isRunning, false);
+  assert.equal(database.tables.assignments.length, 1);
+});
+
+test('rerunning a different round while one is live is rejected and leaves the live round untouched', async () => {
+  await setup();
+  await game.startRound(1);
+  await submitBid(1, { bidMinutes: 45 });
+  await game.nextPrompt();
+  await submitBid(2, { bidMinutes: 50 });
+  const live = await game.getCurrentBiddingState();
+  assert.equal(live.currentRound, 2);
+  await assert.rejects(game.rerunRound(1), /Round 2 is still in progress/);
+  const after = await game.getCurrentBiddingState();
+  assert.equal(after.status, 'bidding');
+  assert.equal(after.currentRound, 2);
+  assert.equal(after.timerId, live.timerId);
+  assert.equal(after.bids.length, 1);
+  assert.equal(database.tables.assignments.length, 1);
+  // Rerunning the live round itself still restarts it.
+  const restarted = await game.rerunRound(2);
+  assert.equal(restarted.currentRound, 2);
+  assert.notEqual(restarted.timerId, live.timerId);
+});
+
+test('after rerunning an earlier round, Next skips rounds that were already played', async () => {
+  await setup(4, 4);
+  await game.startRound(1);
+  await game.nextPrompt();
+  await game.nextPrompt();
+  await game.endRound();
+  const rerun = await game.rerunRound(1);
+  assert.equal(rerun.currentRound, 1);
+  assert.equal(rerun.hasNextRound, true);
+  assert.equal(rerun.nextRoundNumber, 4);
+  await game.endRound();
+  const next = await game.nextPrompt();
+  assert.equal(next.currentRound, 4);
+  assert.equal(next.currentPrompt.id, 4);
+  assert.equal(next.completedRound.round, 1);
+  assert.equal(next.hasNextRound, false);
+  assert.equal(next.nextRoundNumber, null);
+  const done = await game.nextPrompt();
+  assert.match(done.message, /All prompt rounds are complete/);
+});
